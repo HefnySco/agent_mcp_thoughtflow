@@ -1,0 +1,230 @@
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert';
+import { CognitiveBridgeService } from '../dist/services/CognitiveBridgeService.js';
+import { JsonStorageAdapter } from '../dist/storage/JsonStorageAdapter.js';
+import { TaskOrchestratorService } from '../dist/services/TaskOrchestratorService.js';
+import { ToTService } from '../dist/services/ToTService.js';
+import { ThoughtflowServer } from '../dist/index.js';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+describe('Integration Tests', () => {
+  const testStoragePath = path.join(__dirname, '..', 'test-integration-state.json');
+
+  describe('State Sharing Across Services', () => {
+    it('should share state when using setState', async () => {
+      try {
+        await fs.unlink(testStoragePath);
+      } catch {}
+
+      const storageAdapter = new JsonStorageAdapter(testStoragePath);
+      await storageAdapter.initialize();
+
+      const taskService = new TaskOrchestratorService(storageAdapter);
+      const totService = new ToTService(storageAdapter);
+      const bridgeService = new CognitiveBridgeService(storageAdapter, taskService, totService);
+
+      // Load state once and share it
+      const sharedState = await storageAdapter.load();
+      taskService.setState(sharedState);
+      totService.setState(sharedState);
+      bridgeService.setState(sharedState);
+
+      // Create a strategy via taskService
+      const strategy = taskService.createStrategy({ name: 'Shared State Test' });
+
+      // Verify it's visible in totService (which shouldn't have access in old implementation)
+      const state = totService.getState();
+      assert.ok(state.strategies.get(strategy.id));
+      assert.strictEqual(state.strategies.get(strategy.id)?.name, 'Shared State Test');
+
+      await bridgeService.shutdown();
+      await taskService.shutdown();
+      await totService.shutdown();
+      await storageAdapter.close();
+
+      try {
+        await fs.unlink(testStoragePath);
+      } catch {}
+    });
+  });
+
+  describe('Server Startup Simulation', () => {
+    it('should load state once and share across all services', async () => {
+      try {
+        await fs.unlink(testStoragePath);
+      } catch {}
+
+      // Create a server instance with test storage
+      const server = new ThoughtflowServer({
+        storage: {
+          backend: 'json',
+          path: testStoragePath
+        }
+      });
+
+      await server.start();
+
+      // Create data via different services
+      const strategy = server['taskService'].createStrategy({ name: 'Server Test Strategy' });
+      const tree = server['totService'].createTree({ goal: 'Server Test', rootContent: 'Root' });
+
+      // Verify data is in shared state
+      const state = server['taskService'].getState();
+      assert.ok(state.strategies.get(strategy.id));
+      assert.ok(state.trees.get(tree.id));
+
+      await server.shutdown();
+
+      // Verify persistence
+      const storageAdapter = new JsonStorageAdapter(testStoragePath);
+      await storageAdapter.initialize();
+      const loadedState = await storageAdapter.load();
+      
+      assert.ok(loadedState.strategies.get(strategy.id));
+      assert.ok(loadedState.trees.get(tree.id));
+      
+      await storageAdapter.close();
+
+      try {
+        await fs.unlink(testStoragePath);
+      } catch {}
+    });
+  });
+
+  describe('Cross-Service Persistence', () => {
+    it('should persist data created by one service and readable by another after restart', async () => {
+      try {
+        await fs.unlink(testStoragePath);
+      } catch {}
+
+      const storageAdapter = new JsonStorageAdapter(testStoragePath);
+      await storageAdapter.initialize();
+
+      const taskService = new TaskOrchestratorService(storageAdapter);
+      const totService = new ToTService(storageAdapter);
+      const bridgeService = new CognitiveBridgeService(storageAdapter, taskService, totService);
+
+      // Load shared state
+      const sharedState = await storageAdapter.load();
+      taskService.setState(sharedState);
+      totService.setState(sharedState);
+      bridgeService.setState(sharedState);
+
+      // Create strategy via taskService
+      const strategy = taskService.createStrategy({ name: 'Cross-Service Test' });
+      const task = taskService.createTask({ name: 'Test Task' });
+
+      // Force save
+      await taskService.forceSave();
+
+      // Simulate restart - create new services
+      const storageAdapter2 = new JsonStorageAdapter(testStoragePath);
+      await storageAdapter2.initialize();
+
+      const taskService2 = new TaskOrchestratorService(storageAdapter2);
+      const totService2 = new ToTService(storageAdapter2);
+      const bridgeService2 = new CognitiveBridgeService(storageAdapter2, taskService2, totService2);
+
+      // Load shared state
+      const sharedState2 = await storageAdapter2.load();
+      taskService2.setState(sharedState2);
+      totService2.setState(sharedState2);
+      bridgeService2.setState(sharedState2);
+
+      // Verify data persisted and is visible in totService2
+      const state = totService2.getState();
+      assert.ok(state.strategies.get(strategy.id));
+      assert.ok(state.tasks.get(task.id));
+      assert.strictEqual(state.strategies.get(strategy.id)?.name, 'Cross-Service Test');
+
+      await bridgeService2.shutdown();
+      await taskService2.shutdown();
+      await totService2.shutdown();
+      await storageAdapter2.close();
+
+      try {
+        await fs.unlink(testStoragePath);
+      } catch {}
+    });
+  });
+
+  describe('File Location Verification', () => {
+    it('should save to correct absolute path', async () => {
+      try {
+        await fs.unlink(testStoragePath);
+      } catch {}
+
+      const server = new ThoughtflowServer({
+        storage: {
+          backend: 'json',
+          path: testStoragePath
+        }
+      });
+
+      await server.start();
+
+      // Create some data
+      server['taskService'].createStrategy({ name: 'Path Test' });
+
+      await server.shutdown();
+
+      // Verify file exists at expected location
+      try {
+        await fs.access(testStoragePath);
+        const content = await fs.readFile(testStoragePath, 'utf-8');
+        const state = JSON.parse(content);
+        assert.ok(Object.keys(state.strategies).length > 0);
+      } catch (err) {
+        assert.fail(`State file not found at ${testStoragePath}`);
+      }
+
+      try {
+        await fs.unlink(testStoragePath);
+      } catch {}
+    });
+  });
+
+  describe('Independent State Loading Bug', () => {
+    it('should detect bug when services load independently', async () => {
+      try {
+        await fs.unlink(testStoragePath);
+      } catch {}
+
+      const storageAdapter = new JsonStorageAdapter(testStoragePath);
+      await storageAdapter.initialize();
+
+      const taskService = new TaskOrchestratorService(storageAdapter);
+      const totService = new ToTService(storageAdapter);
+
+      // OLD BUG: Each service loads independently
+      await taskService.load();
+      await totService.load();
+
+      // Create strategy via taskService
+      const strategy = taskService.createStrategy({ name: 'Bug Test' });
+
+      // In the bug, totService won't see this strategy
+      const totState = totService.getState();
+      const taskState = taskService.getState();
+
+      // This would fail with the bug (totState.strategies would be empty)
+      // But with setState fix, this should work
+      if (Object.keys(totState.strategies).length === 0 && Object.keys(taskState.strategies).length > 0) {
+        console.warn('WARNING: Services have independent states - bug detected');
+      }
+
+      await taskService.shutdown();
+      await totService.shutdown();
+      await storageAdapter.close();
+
+      try {
+        await fs.unlink(testStoragePath);
+      } catch {}
+    });
+  });
+});

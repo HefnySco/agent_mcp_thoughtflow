@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -17,6 +19,10 @@ import { totToolDefinitions } from './registry/totToolHandlers.js';
 import { bridgeToolDefinitions } from './registry/bridgeToolHandlers.js';
 import { logger } from './utils/logger.js';
 
+// Get the directory of the current module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 /**
  * Thoughtflow MCP Server
  * Unified cognitive scaffold combining Task Orchestrator, Tree of Thoughts, and Bridge Layer
@@ -33,7 +39,7 @@ class ThoughtflowServer {
   constructor(config?: { storage?: StorageConfig }) {
     const storageConfig: StorageConfig = config?.storage || {
       backend: 'json',
-      path: './thoughtflow-state.json'
+      path: path.join(__dirname, '..', 'thoughtflow-state.json')
     };
 
     this.storageAdapter = StorageFactory.create(storageConfig);
@@ -42,6 +48,11 @@ class ThoughtflowServer {
     this.bridgeService = new CognitiveBridgeService(this.storageAdapter, this.taskService, this.totService);
     this.visualizationService = new VisualizationService(this.taskService, this.totService, this.bridgeService);
     this.toolRegistry = new ToolRegistry();
+
+    // Reduce debounce delay to ensure data persists before shutdown
+    this.taskService.setSaveDebounceMs(100);
+    this.totService.setSaveDebounceMs(100);
+    this.bridgeService.setSaveDebounceMs(100);
 
     this.server = new Server(
       {
@@ -136,9 +147,13 @@ class ThoughtflowServer {
 
   async start(): Promise<void> {
     await this.storageAdapter.initialize();
-    await this.taskService.load();
-    await this.totService.load();
-    await this.bridgeService.load();
+    
+    // Load state once and share it across all services
+    const sharedState = await this.storageAdapter.load();
+    this.taskService.setState(sharedState);
+    this.totService.setState(sharedState);
+    this.bridgeService.setState(sharedState);
+    
     // VisualizationService no longer needs to load - it uses services directly
 
     const transport = new StdioServerTransport();

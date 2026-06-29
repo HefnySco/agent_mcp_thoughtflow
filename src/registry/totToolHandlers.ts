@@ -37,7 +37,14 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
         required: ['id']
       }
     },
-    handler: (args: any, service: any) => service.getTree(args.id)
+    handler: (args: any, service: any) => {
+      const tree = service.getTreeFull(args.id);
+      // Convert thoughts Map to object for JSON serialization
+      return {
+        ...tree,
+        thoughts: Object.fromEntries(tree.thoughts)
+      };
+    }
   },
   {
     name: 'list_trees',
@@ -67,9 +74,9 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
     handler: (args: any, service: any) => service.deleteTree(args.id)
   },
   {
-    name: 'add_child',
+    name: 'add_idea',
     tool: {
-      name: 'add_child',
+      name: 'add_idea',
       description: 'Add a child thought to an existing thought',
       inputSchema: {
         type: 'object',
@@ -82,7 +89,7 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
         required: ['treeId', 'parentId', 'content']
       }
     },
-    handler: (args: any, service: any) => service.addChild(args.treeId, args.parentId, args.content, args.metadata)
+    handler: (args: any, service: any) => service.addIdea(args.treeId, args.parentId, args.content, args.metadata)
   },
   {
     name: 'get_thought',
@@ -188,50 +195,6 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
     handler: (args: any, service: any) => service.pruneTree(args)
   },
   {
-    name: 'create_strategy',
-    tool: {
-      name: 'create_strategy',
-      description: 'Create a strategy for organizing related trees',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          name: { type: 'string', description: 'Strategy name' },
-          description: { type: 'string', description: 'Strategy description' },
-          metadata: { type: 'object', description: 'Additional metadata' }
-        },
-        required: ['name']
-      }
-    },
-    handler: (args: any, service: any) => service.createStrategy(args)
-  },
-  {
-    name: 'get_strategy',
-    tool: {
-      name: 'get_strategy',
-      description: 'Get a strategy by ID',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'Strategy ID' }
-        },
-        required: ['id']
-      }
-    },
-    handler: (args: any, service: any) => service.getStrategy(args.id)
-  },
-  {
-    name: 'list_strategies',
-    tool: {
-      name: 'list_strategies',
-      description: 'List all strategies',
-      inputSchema: {
-        type: 'object',
-        properties: {}
-      }
-    },
-    handler: (_args: any, service: any) => service.listStrategies()
-  },
-  {
     name: 'clear_all_trees',
     tool: {
       name: 'clear_all_trees',
@@ -245,5 +208,18 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
       await service.clearAll();
       return { success: true };
     }
+  },
+  {
+    name: 'deduplicate_trees',
+    tool: {
+      name: 'deduplicate_trees',
+      description: 'Deduplicate trees by normalized goal. Keeps the first occurrence of each unique normalized goal and removes duplicates.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        required: []
+      }
+    },
+    handler: (_args: any, service: any) => Promise.resolve({ removed: service.deduplicateTrees() })
   }
 ];

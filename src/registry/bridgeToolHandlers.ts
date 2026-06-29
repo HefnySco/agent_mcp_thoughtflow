@@ -48,13 +48,14 @@ export const bridgeToolDefinitions: { name: string; tool: Tool; handler: ToolHan
     name: 'link_thought_to_task',
     tool: {
       name: 'link_thought_to_task',
-      description: 'Link a thought to a task for provenance tracking',
+      description: 'Create a soft bidirectional link between a thought and a task for provenance tracking',
       inputSchema: {
         type: 'object',
         properties: {
           treeId: { type: 'string', description: 'Tree ID' },
           thoughtId: { type: 'string', description: 'Thought ID' },
-          taskId: { type: 'string', description: 'Task ID' }
+          taskId: { type: 'string', description: 'Task ID' },
+          reason: { type: 'string', description: 'Optional reason for the link (e.g., "inspired by", "related to")' }
         },
         required: ['treeId', 'thoughtId', 'taskId']
       }
@@ -77,5 +78,18 @@ export const bridgeToolDefinitions: { name: string; tool: Tool; handler: ToolHan
       }
     },
     handler: (args: any, service: any) => service.getCognitiveProvenance(args.id, args.type, args.maxDepth)
+  },
+  {
+    name: 'deduplicate_strategies_and_trees',
+    tool: {
+      name: 'deduplicate_strategies_and_trees',
+      description: 'Deduplicate strategies and trees by their normalized name/goal. This cleans up duplicate entries that may have been created before the deduplication logic was added. Keeps the first occurrence of each unique normalized name/goal and removes duplicates.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        required: []
+      }
+    },
+    handler: (_args: any, service: any) => service.deduplicateStrategiesAndTrees()
   }
 ];

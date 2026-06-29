@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 import type {
   Task,
   Workflow,
@@ -31,11 +30,12 @@ export class TaskOrchestratorService extends BaseService {
     dependencies?: string[];
     parentTaskId?: string;
     order?: number;
+    status?: Task['status'];
     metadata?: Record<string, any>;
   }): Task {
     validateRequiredString(task.name, 'name');
     
-    const id = uuidv4();
+    const id = this.generateId(task.name);
     const now = new Date().toISOString();
     
     // Validate parent task exists
@@ -61,7 +61,7 @@ export class TaskOrchestratorService extends BaseService {
       dependencies: task.dependencies || [],
       parentTaskId: task.parentTaskId,
       order: task.order,
-      status: 'pending',
+      status: task.status || 'pending',
       createdAt: now,
       updatedAt: now,
       metadata: task.metadata
@@ -70,7 +70,8 @@ export class TaskOrchestratorService extends BaseService {
     this.state.tasks.set(id, newTask);
     this.triggerSave();
     logger.info(`Created task: ${id} - ${task.name}`);
-    return newTask;
+    // Return minimal summary
+    return { id, name: newTask.name, status: newTask.status } as Task;
   }
 
   /**
@@ -94,13 +95,12 @@ export class TaskOrchestratorService extends BaseService {
 
   /**
    * List tasks, optionally filtered by status
+   * Returns minimal summaries for efficiency
    */
-  listTasks(status?: Task['status']): Task[] {
+  listTasks(status?: Task['status']): Array<{ id: string; name: string; status: string }> {
     const allTasks = Array.from(this.state.tasks.values());
-    if (status) {
-      return allTasks.filter(task => task.status === status);
-    }
-    return allTasks;
+    const filtered = status ? allTasks.filter(task => task.status === status) : allTasks;
+    return filtered.map(t => ({ id: t.id, name: t.name, status: t.status }));
   }
 
   /**
@@ -141,7 +141,8 @@ export class TaskOrchestratorService extends BaseService {
     task.updatedAt = now;
     this.state.tasks.set(id, task);
     this.triggerSave();
-    return task;
+    // Return minimal summary
+    return { id, name: task.name, status: task.status } as Task;
   }
 
   /**
@@ -168,7 +169,7 @@ export class TaskOrchestratorService extends BaseService {
   }): Workflow {
     validateRequiredString(workflow.name, 'name');
     
-    const id = uuidv4();
+    const id = this.generateId(workflow.name);
     const now = new Date().toISOString();
     
     // Validate all tasks exist
@@ -192,7 +193,8 @@ export class TaskOrchestratorService extends BaseService {
     this.state.workflows.set(id, newWorkflow);
     this.triggerSave();
     logger.info(`Created workflow: ${id} - ${workflow.name}`);
-    return newWorkflow;
+    // Return minimal summary
+    return { id, name: newWorkflow.name, status: newWorkflow.status } as Workflow;
   }
 
   /**
@@ -212,6 +214,20 @@ export class TaskOrchestratorService extends BaseService {
    */
   getAllWorkflows(): Workflow[] {
     return Array.from(this.state.workflows.values());
+  }
+
+  /**
+   * List all workflows (alias for getAllWorkflows for tool handler compatibility)
+   * Tool handlers expect this name
+   * Returns minimal summaries for efficiency
+   */
+  listWorkflows(): Array<{ id: string; name: string; status: string; taskCount: number }> {
+    return Array.from(this.state.workflows.values()).map(w => ({
+      id: w.id,
+      name: w.name,
+      status: w.status,
+      taskCount: w.taskIds.length
+    }));
   }
 
   /**
@@ -260,25 +276,39 @@ export class TaskOrchestratorService extends BaseService {
     metadata?: Record<string, any>;
   }): Strategy {
     validateRequiredString(strategy.name, 'name');
-    
-    const id = uuidv4();
+
+    // Normalize the name for comparison and use as ID
+    const normalizedName = this.normalizeKey(strategy.name);
+
+    // Check if strategy with same normalized name already exists
+    for (const [id, existingStrategy] of this.state.strategies) {
+      if (this.normalizeKey(existingStrategy.name) === normalizedName) {
+        logger.info(`Returning existing strategy: ${id} - ${existingStrategy.name} (normalized: ${normalizedName})`);
+        return existingStrategy;
+      }
+    }
+
+    // Use normalized name as ID since strategies should be unique by name
+    const id = normalizedName;
     const now = new Date().toISOString();
-    
+
     const newStrategy: Strategy = {
       id,
       name: strategy.name,
       description: strategy.description,
       status: 'active',
       treeIds: [],
+      workflowIds: [],
       createdAt: now,
       updatedAt: now,
       metadata: strategy.metadata
     };
-    
+
     this.state.strategies.set(id, newStrategy);
     this.triggerSave();
-    logger.info(`Created strategy: ${id} - ${strategy.name}`);
-    return newStrategy;
+    logger.info(`Created strategy: ${id} - ${strategy.name} (normalized: ${normalizedName})`);
+    // Return minimal summary
+    return { id, name: newStrategy.name, status: newStrategy.status } as Strategy;
   }
 
   /**
@@ -301,17 +331,130 @@ export class TaskOrchestratorService extends BaseService {
   }
 
   /**
+   * Deduplicate strategies by normalized name.
+   * Keeps the first occurrence of each unique normalized name and removes duplicates.
+   * Returns the number of duplicates removed.
+   */
+  deduplicateStrategies(): number {
+    const seen = new Map<string, string>(); // normalized name -> strategy id
+    const toDelete: string[] = [];
+
+    for (const [id, strategy] of this.state.strategies) {
+      const normalizedName = this.normalizeKey(strategy.name);
+      if (seen.has(normalizedName)) {
+        toDelete.push(id);
+        logger.info(`Marking duplicate strategy for deletion: ${id} - ${strategy.name} (normalized: ${normalizedName})`);
+      } else {
+        seen.set(normalizedName, id);
+      }
+    }
+
+    // Delete duplicates
+    for (const id of toDelete) {
+      this.state.strategies.delete(id);
+    }
+
+    if (toDelete.length > 0) {
+      this.triggerSave();
+      logger.info(`Deduplicated strategies: removed ${toDelete.length} duplicates`);
+    }
+
+    return toDelete.length;
+  }
+
+  /**
+   * Add a tree to a strategy
+   */
+  addTreeToStrategy(strategyId: string, treeId: string): Strategy {
+    validateId(strategyId, 'Strategy');
+    validateId(treeId, 'Tree');
+    
+    const strategy = this.getStrategy(strategyId);
+    
+    if (!strategy.treeIds.includes(treeId)) {
+      strategy.treeIds.push(treeId);
+      strategy.updatedAt = new Date().toISOString();
+      this.triggerSave();
+      logger.info(`Added tree ${treeId} to strategy ${strategyId}`);
+    }
+    
+    // Return minimal summary
+    return { id: strategyId, name: strategy.name, status: strategy.status } as Strategy;
+  }
+
+  /**
+   * Remove a tree from a strategy
+   */
+  removeTreeFromStrategy(strategyId: string, treeId: string): Strategy {
+    validateId(strategyId, 'Strategy');
+    validateId(treeId, 'Tree');
+    
+    const strategy = this.getStrategy(strategyId);
+    const index = strategy.treeIds.indexOf(treeId);
+    
+    if (index > -1) {
+      strategy.treeIds.splice(index, 1);
+      strategy.updatedAt = new Date().toISOString();
+      this.triggerSave();
+      logger.info(`Removed tree ${treeId} from strategy ${strategyId}`);
+    }
+    
+    // Return minimal summary
+    return { id: strategyId, name: strategy.name, status: strategy.status } as Strategy;
+  }
+
+  /**
+   * Add a workflow to a strategy
+   */
+  addWorkflowToStrategy(strategyId: string, workflowId: string): Strategy {
+    validateId(strategyId, 'Strategy');
+    validateId(workflowId, 'Workflow');
+    
+    const strategy = this.getStrategy(strategyId);
+    
+    if (!strategy.workflowIds.includes(workflowId)) {
+      strategy.workflowIds.push(workflowId);
+      strategy.updatedAt = new Date().toISOString();
+      this.triggerSave();
+      logger.info(`Added workflow ${workflowId} to strategy ${strategyId}`);
+    }
+    
+    // Return minimal summary to reduce returned tokens
+    return { id: strategyId, name: strategy.name, status: strategy.status } as Strategy;
+  }
+
+  /**
+   * Remove a workflow from a strategy
+   */
+  removeWorkflowFromStrategy(strategyId: string, workflowId: string): Strategy {
+    validateId(strategyId, 'Strategy');
+    validateId(workflowId, 'Workflow');
+    
+    const strategy = this.getStrategy(strategyId);
+    const index = strategy.workflowIds.indexOf(workflowId);
+    
+    if (index > -1) {
+      strategy.workflowIds.splice(index, 1);
+      strategy.updatedAt = new Date().toISOString();
+      this.triggerSave();
+      logger.info(`Removed workflow ${workflowId} from strategy ${strategyId}`);
+    }
+    
+    // Return minimal summary
+    return { id: strategyId, name: strategy.name, status: strategy.status } as Strategy;
+  }
+
+  /**
    * Clear all data
    */
   async clearAll(): Promise<void> {
-    this.state = {
-      tasks: new Map(),
-      workflows: new Map(),
-      workflowRuns: new Map(),
-      strategies: new Map(),
-      trees: new Map(),
-      cognitiveLinks: new Map()
-    };
+    // Clear the shared state object instead of creating a new one
+    this.state.tasks.clear();
+    this.state.workflows.clear();
+    this.state.workflowRuns.clear();
+    this.state.strategies.clear();
+    this.state.trees.clear();
+    this.state.cognitiveLinks.clear();
     await this.storageAdapter.clear();
     logger.info('Cleared all data');
   }
@@ -324,7 +467,7 @@ export class TaskOrchestratorService extends BaseService {
    * Start execution of a workflow
    * Creates a workflow run and marks initially ready tasks as in_progress
    */
-  startWorkflowExecution(workflowId: string): { runId: string; readyTasks: Task[] } {
+  startWorkflowExecution(workflowId: string): { runId: string; readyTasks: Array<{ id: string; name: string; status: string }> } {
     validateId(workflowId, 'Workflow');
     
     const workflow = this.state.workflows.get(workflowId);
@@ -333,7 +476,7 @@ export class TaskOrchestratorService extends BaseService {
     }
 
     // Create workflow run
-    const runId = uuidv4();
+    const runId = this.generateId(`run-${workflow.name}`);
     const now = new Date().toISOString();
     
     const workflowRun = {
@@ -356,7 +499,9 @@ export class TaskOrchestratorService extends BaseService {
     this.triggerSave();
     logger.info(`Started workflow execution: ${runId} for workflow: ${workflowId}`);
     
-    return { runId, readyTasks };
+    // Return minimal task summaries
+    const readyTaskSummaries = readyTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
+    return { runId, readyTasks: readyTaskSummaries };
   }
 
   /**
@@ -364,9 +509,9 @@ export class TaskOrchestratorService extends BaseService {
    * Finds newly ready tasks and returns workflow status
    */
   advanceWorkflowRun(runId: string): {
-    completedTasks: Task[];
-    failedTasks: Task[];
-    newlyReadyTasks: Task[];
+    completedTasks: Array<{ id: string; name: string; status: string }>;
+    failedTasks: Array<{ id: string; name: string; status: string }>;
+    newlyReadyTasks: Array<{ id: string; name: string; status: string }>;
     workflowStatus: 'in_progress' | 'completed' | 'failed';
   } {
     validateId(runId, 'WorkflowRun');
@@ -424,10 +569,15 @@ export class TaskOrchestratorService extends BaseService {
     
     logger.info(`Advanced workflow run: ${runId}, status: ${workflowStatus}`);
     
+    // Return minimal task summaries
+    const completedTaskSummaries = completedTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
+    const failedTaskSummaries = failedTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
+    const newlyReadyTaskSummaries = newlyReadyTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
+    
     return {
-      completedTasks,
-      failedTasks,
-      newlyReadyTasks,
+      completedTasks: completedTaskSummaries,
+      failedTasks: failedTaskSummaries,
+      newlyReadyTasks: newlyReadyTaskSummaries,
       workflowStatus
     };
   }
@@ -544,6 +694,7 @@ export class TaskOrchestratorService extends BaseService {
     this.triggerSave();
     logger.info(`Moved task: ${taskId}`);
     
-    return updatedTask;
+    // Return minimal summary
+    return { id: taskId, name: updatedTask.name, status: updatedTask.status } as Task;
   }
 }

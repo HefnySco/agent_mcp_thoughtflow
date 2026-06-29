@@ -1,0 +1,121 @@
+{
+  "tasks": {
+    "task-1-pending-afe799fc": {
+      "id": "task-1-pending-afe799fc",
+      "name": "Task 1 - Pending",
+      "dependencies": [],
+      "status": "pending",
+      "createdAt": "2026-06-29T14:32:23.397Z",
+      "updatedAt": "2026-06-29T14:32:23.397Z"
+    },
+    "task-2-in-progress-4f20ca5d": {
+      "id": "task-2-in-progress-4f20ca5d",
+      "name": "Task 2 - In Progress",
+      "dependencies": [],
+      "status": "in_progress",
+      "createdAt": "2026-06-29T14:32:23.420Z",
+      "updatedAt": "2026-06-29T14:32:23.420Z"
+    },
+    "task-3-completed-7db28323": {
+      "id": "task-3-completed-7db28323",
+      "name": "Task 3 - Completed",
+      "dependencies": [],
+      "status": "completed",
+      "createdAt": "2026-06-29T14:32:23.465Z",
+      "updatedAt": "2026-06-29T14:32:23.465Z"
+    },
+    "task-4-failed-75b8aa7a": {
+      "id": "task-4-failed-75b8aa7a",
+      "name": "Task 4 - Failed",
+      "dependencies": [],
+      "status": "failed",
+      "createdAt": "2026-06-29T14:32:23.554Z",
+      "updatedAt": "2026-06-29T14:32:23.554Z"
+    }
+  },
+  "workflows": {
+    "testing-workflow-7d99d043": {
+      "id": "testing-workflow-7d99d043",
+      "name": "Testing Workflow",
+      "description": "Workflow with tasks in different statuses",
+      "taskIds": [
+        "task-1-pending-afe799fc",
+        "task-2-in-progress-4f20ca5d",
+        "task-3-completed-7db28323",
+        "task-4-failed-75b8aa7a"
+      ],
+      "status": "pending",
+      "createdAt": "2026-06-29T14:32:26.706Z",
+      "updatedAt": "2026-06-29T14:32:26.706Z"
+    }
+  },
+  "workflowRuns": {},
+  "strategies": {
+    "testing-mcp": {
+      "id": "testing-mcp",
+      "name": "testing-mcp",
+      "description": "A strategy for testing MCP thoughtflow functionality",
+      "status": "active",
+      "treeIds": [
+        "test-thoughtflow-tree-functionality-bfa589cb"
+      ],
+      "workflowIds": [
+        "testing-workflow-7d99d043"
+      ],
+      "createdAt": "2026-06-29T14:32:23.383Z",
+      "updatedAt": "2026-06-29T14:32:34.594Z"
+    }
+  },
+  "trees": {
+    "test-thoughtflow-tree-functionality-bfa589cb": {
+      "id": "test-thoughtflow-tree-functionality-bfa589cb",
+      "rootId": "root-thought-for-testing-mcp-thoughtflow-c47b8676",
+      "thoughts": {
+        "root-thought-for-testing-mcp-thoughtflow-c47b8676": {
+          "id": "root-thought-for-testing-mcp-thoughtflow-c47b8676",
+          "content": "Root thought for testing MCP thoughtflow",
+          "parentId": null,
+          "children": [
+            "first-child-thought-exploring-approach-a-3b6942bc",
+            "second-child-thought-exploring-approach-b-42ebe1a0"
+          ],
+          "evaluation": null,
+          "state": "pending",
+          "depth": 0,
+          "createdAt": "2026-06-29T14:32:26.989Z",
+          "updatedAt": "2026-06-29T14:32:26.989Z"
+        },
+        "first-child-thought-exploring-approach-a-3b6942bc": {
+          "id": "first-child-thought-exploring-approach-a-3b6942bc",
+          "content": "First child thought exploring approach A",
+          "parentId": "root-thought-for-testing-mcp-thoughtflow-c47b8676",
+          "children": [],
+          "evaluation": null,
+          "state": "pending",
+          "depth": 1,
+          "createdAt": "2026-06-29T14:32:30.436Z",
+          "updatedAt": "2026-06-29T14:32:30.436Z",
+          "metadata": {}
+        },
+        "second-child-thought-exploring-approach-b-42ebe1a0": {
+          "id": "second-child-thought-exploring-approach-b-42ebe1a0",
+          "content": "Second child thought exploring approach B",
+          "parentId": "root-thought-for-testing-mcp-thoughtflow-c47b8676",
+          "children": [],
+          "evaluation": null,
+          "state": "pending",
+          "depth": 1,
+          "createdAt": "2026-06-29T14:32:30.572Z",
+          "updatedAt": "2026-06-29T14:32:30.572Z",
+          "metadata": {}
+        }
+      },
+      "goal": "Test thoughtflow tree functionality",
+      "createdAt": "2026-06-29T14:32:26.989Z",
+      "updatedAt": "2026-06-29T14:32:30.572Z",
+      "maxDepth": 10,
+      "metadata": {}
+    }
+  },
+  "cognitiveLinks": {}
+}

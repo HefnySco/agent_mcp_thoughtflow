@@ -1,4 +1,3 @@
-import type { Task } from '../types/index.js';
 import type { TaskOrchestratorService } from './TaskOrchestratorService.js';
 import type { ToTService } from './ToTService.js';
 import type { CognitiveBridgeService } from './CognitiveBridgeService.js';
@@ -21,7 +20,7 @@ export class VisualizationService {
    * Visualize a tree as ASCII art
    */
   visualizeTreeAscii(treeId: string): string {
-    const tree = this.totService.getTree(treeId);
+    const tree = this.totService.getTreeFull(treeId);
     if (!tree) {
       throw new Error(`Tree ${treeId} not found`);
     }
@@ -59,7 +58,7 @@ export class VisualizationService {
    * Visualize a tree with thought→task links
    */
   visualizeTreeWithLinks(treeId: string): string {
-    const tree = this.totService.getTree(treeId);
+    const tree = this.totService.getTreeFull(treeId);
     if (!tree) {
       throw new Error(`Tree ${treeId} not found`);
     }
@@ -162,7 +161,7 @@ export class VisualizationService {
   }
 
   /**
-   * Visualize a workflow as SVG
+   * Visualize a workflow as SVG (showing all tasks with detailed status)
    */
   visualizeWorkflowSvg(workflowId: string): string {
     const workflow = this.taskService.getWorkflow(workflowId);
@@ -170,152 +169,48 @@ export class VisualizationService {
       throw new Error(`Workflow ${workflowId} not found`);
     }
 
-    const tasks = workflow.taskIds.map(id => this.taskService.getTask(id)).filter(t => t !== undefined) as Task[];
-    
-    // Calculate layout (simple topological layout)
-    const taskPositions = new Map<string, { x: number; y: number }>();
-    const levels = new Map<string, number>();
-    
-    // Calculate levels based on dependencies
-    const calculateLevel = (taskId: string, visited = new Set<string>()): number => {
-      if (visited.has(taskId)) return 0;
-      visited.add(taskId);
-      
-      const task = this.taskService.getTask(taskId);
-      if (!task || !task.dependencies || task.dependencies.length === 0) return 0;
-      
-      const maxDepLevel = Math.max(...task.dependencies.map((depId: string) => calculateLevel(depId, visited)));
-      return maxDepLevel + 1;
-    };
-
-    tasks.forEach(task => {
-      levels.set(task.id, calculateLevel(task.id));
-    });
-
-    // Group by level
-    const levelGroups = new Map<number, Task[]>();
-    tasks.forEach(task => {
-      const level = levels.get(task.id) || 0;
-      if (!levelGroups.has(level)) levelGroups.set(level, []);
-      levelGroups.get(level)!.push(task);
-    });
-
-    // Calculate positions
-    const nodeWidth = 160;
-    const nodeHeight = 60;
-    const horizontalGap = 40;
-    const verticalGap = 80;
-
-    levelGroups.forEach((tasksAtLevel, level) => {
-      tasksAtLevel.forEach((task, index) => {
-        const x = index * (nodeWidth + horizontalGap) + 50;
-        const y = level * (nodeHeight + verticalGap) + 50;
-        taskPositions.set(task.id, { x, y });
-      });
-    });
-
-    // Generate SVG
-    const width = Math.max(...Array.from(taskPositions.values()).map(p => p.x)) + nodeWidth + 50;
-    const height = Math.max(...Array.from(taskPositions.values()).map(p => p.y)) + nodeHeight + 50;
+    const width = 800;
+    const taskHeight = workflow.taskIds.length * 35;
+    const height = 150 + taskHeight;
 
     let svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`;
     svg += `<style>
-      .task-box { fill: #f0f0f0; stroke: #333; stroke-width: 2; rx: 8; }
-      .task-box-pending { fill: #fff9c4; stroke: #f9a825; }
-      .task-box-in_progress { fill: #c8e6c9; stroke: #2e7d32; }
-      .task-box-completed { fill: #bbdefb; stroke: #1565c0; }
-      .task-box-failed { fill: #ffcdd2; stroke: #c62828; }
-      .task-text { font-family: Arial, sans-serif; font-size: 12px; fill: #333; }
-      .dependency-line { stroke: #666; stroke-width: 2; marker-end: url(#arrowhead); }
-      .workflow-title { font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; fill: #333; }
-    </style>`;
-    svg += `<defs>
-      <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-        <polygon points="0 0, 10 3.5, 0 7" fill="#666" />
-      </marker>
-    </defs>`;
-    
-    svg += `<text x="20" y="25" class="workflow-title">Workflow: ${workflow.name}</text>`;
-
-    // Draw dependency lines
-    tasks.forEach(task => {
-      const fromPos = taskPositions.get(task.id);
-      if (!fromPos) return;
-
-      (task.dependencies || []).forEach((depId: string) => {
-        const toPos = taskPositions.get(depId);
-        if (toPos) {
-          svg += `<line x1="${toPos.x + nodeWidth/2}" y1="${toPos.y + nodeHeight}" x2="${fromPos.x + nodeWidth/2}" y2="${fromPos.y}" class="dependency-line" />`;
-        }
-      });
-    });
-
-    // Draw task boxes
-    tasks.forEach(task => {
-      const pos = taskPositions.get(task.id);
-      if (!pos) return;
-
-      const statusClass = `task-box-${task.status}`;
-      const displayName = task.name.substring(0, 20) + (task.name.length > 20 ? '...' : '');
-      
-      svg += `<rect x="${pos.x}" y="${pos.y}" width="${nodeWidth}" height="${nodeHeight}" class="task-box ${statusClass}" />`;
-      svg += `<text x="${pos.x + nodeWidth/2}" y="${pos.y + nodeHeight/2 + 4}" text-anchor="middle" class="task-text">${displayName}</text>`;
-    });
-
-    svg += '</svg>';
-    return svg;
-  }
-
-  /**
-   * Visualize a single task as SVG
-   */
-  visualizeTaskSvg(taskId: string): string {
-    const task = this.taskService.getTask(taskId);
-    if (!task) {
-      throw new Error(`Task ${taskId} not found`);
-    }
-
-    const width = 300;
-    const height = 200;
-
-    let svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`;
-    svg += `<style>
-      .task-box { fill: #f0f0f0; stroke: #333; stroke-width: 2; rx: 8; }
-      .task-box-pending { fill: #fff9c4; stroke: #f9a825; }
-      .task-box-in_progress { fill: #c8e6c9; stroke: #2e7d32; }
-      .task-box-completed { fill: #bbdefb; stroke: #1565c0; }
-      .task-box-failed { fill: #ffcdd2; stroke: #c62828; }
-      .task-title { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #333; }
-      .task-desc { font-family: Arial, sans-serif; font-size: 12px; fill: #555; }
+      .workflow-box { fill: #fff3e0; stroke: #e65100; stroke-width: 2; rx: 8; }
+      .task-box { fill: #ffffff; stroke: #999; stroke-width: 1; rx: 3; }
+      .workflow-title { font-family: Arial, sans-serif; font-size: 18px; font-weight: bold; fill: #e65100; }
+      .task-title { font-family: Arial, sans-serif; font-size: 13px; font-weight: bold; fill: #333; }
       .task-meta { font-family: Arial, sans-serif; font-size: 11px; fill: #666; }
+      .status-pending { fill: #fff9c4; }
+      .status-in-progress { fill: #b3e5fc; }
+      .status-completed { fill: #c8e6c9; }
+      .status-failed { fill: #ffcdd2; }
     </style>`;
 
-    const statusClass = `task-box-${task.status}`;
-    const displayName = task.name.substring(0, 30) + (task.name.length > 30 ? '...' : '');
-    const displayDesc = task.description ? task.description.substring(0, 40) + (task.description.length > 40 ? '...' : '') : '';
+    svg += `<rect x="10" y="10" width="${width - 20}" height="${height - 20}" class="workflow-box" />`;
+    svg += `<text x="30" y="45" class="workflow-title">Workflow: ${workflow.name}</text>`;
+    svg += `<text x="30" y="70" class="task-meta">Tasks: ${workflow.taskIds.length} | Status: ${workflow.status}</text>`;
 
-    svg += `<rect x="10" y="10" width="${width - 20}" height="${height - 20}" class="task-box ${statusClass}" />`;
-    svg += `<text x="20" y="35" class="task-title">${displayName}</text>`;
-    svg += `<text x="20" y="55" class="task-desc">${displayDesc}</text>`;
-    svg += `<text x="20" y="80" class="task-meta">Status: ${task.status}</text>`;
-    svg += `<text x="20" y="95" class="task-meta">Dependencies: ${(task.dependencies || []).length}</text>`;
-    
-    if (task.metadata?.cognitive) {
-      const cognitive = task.metadata.cognitive as any;
-      if (cognitive.sourceThoughtId) {
-        svg += `<text x="20" y="110" class="task-meta">Source Thought: ${cognitive.sourceThoughtId.substring(0, 15)}...</text>`;
+    let taskY = 95;
+    workflow.taskIds.forEach((taskId: string, idx: number) => {
+      const task = this.taskService.getTask(taskId);
+      if (task) {
+        const statusClass = `status-${task.status || 'pending'}`;
+        const deps = task.dependencies && task.dependencies.length > 0 
+          ? `→ deps: ${task.dependencies.length}` 
+          : '';
+        svg += `<rect x="30" y="${taskY}" width="${width - 60}" height="30" class="task-box ${statusClass}" />`;
+        svg += `<text x="40" y="${taskY + 19}" class="task-title">${idx + 1}. ${task.name}</text>`;
+        svg += `<text x="${width - 120}" y="${taskY + 19}" class="task-meta">${task.status}${deps}</text>`;
+        taskY += 35;
       }
-      if (cognitive.explorationTreeIds && cognitive.explorationTreeIds.length > 0) {
-        svg += `<text x="20" y="125" class="task-meta">Exploration Trees: ${cognitive.explorationTreeIds.length}</text>`;
-      }
-    }
+    });
 
     svg += '</svg>';
     return svg;
   }
 
   /**
-   * Visualize a strategy as SVG (showing trees)
+   * Visualize a strategy as SVG (showing trees and workflows with detailed status)
    */
   visualizeStrategySvg(strategyId: string): string {
     const strategy = this.totService.getStrategy(strategyId);
@@ -324,32 +219,114 @@ export class VisualizationService {
     }
 
     const trees = this.totService.getAllTrees().filter(t => strategy.treeIds?.includes(t.id));
+    const workflows = this.taskService.getAllWorkflows().filter(w => strategy.workflowIds?.includes(w.id));
     
-    const width = 800;
-    const height = 200 + trees.length * 120;
+    const width = 900;
+    const treeHeight = trees.length * 150;
+    const workflowHeight = workflows.length * 200;
+    const height = 200 + treeHeight + workflowHeight;
 
     let svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">`;
     svg += `<style>
       .strategy-box { fill: #e3f2fd; stroke: #1565c0; stroke-width: 2; rx: 8; }
       .tree-box { fill: #f5f5f5; stroke: #666; stroke-width: 1; rx: 4; }
-      .strategy-title { font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; fill: #1565c0; }
+      .workflow-box { fill: #fff3e0; stroke: #e65100; stroke-width: 1; rx: 4; }
+      .task-box { fill: #ffffff; stroke: #999; stroke-width: 1; rx: 3; }
+      .thought-box { fill: #ffffff; stroke: #999; stroke-width: 1; rx: 3; }
+      .strategy-title { font-family: Arial, sans-serif; font-size: 18px; font-weight: bold; fill: #1565c0; }
+      .section-title { font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; fill: #333; }
       .tree-title { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #333; }
-      .tree-meta { font-family: Arial, sans-serif; font-size: 12px; fill: #666; }
+      .workflow-title { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #e65100; }
+      .task-title { font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; fill: #333; }
+      .thought-title { font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; fill: #333; }
+      .tree-meta { font-family: Arial, sans-serif; font-size: 11px; fill: #666; }
+      .workflow-meta { font-family: Arial, sans-serif; font-size: 11px; fill: #666; }
+      .task-meta { font-family: Arial, sans-serif; font-size: 10px; fill: #666; }
+      .thought-meta { font-family: Arial, sans-serif; font-size: 10px; fill: #666; }
+      .status-pending { fill: #fff9c4; }
+      .status-in-progress { fill: #b3e5fc; }
+      .status-completed { fill: #c8e6c9; }
+      .status-failed { fill: #ffcdd2; }
+      .state-pending { fill: #e0e0e0; }
+      .state-selected { fill: #c8e6c9; }
+      .state-evaluated { fill: #fff9c4; }
+      .state-verified { fill: #b3e5fc; }
     </style>`;
 
     svg += `<rect x="10" y="10" width="${width - 20}" height="${height - 20}" class="strategy-box" />`;
-    svg += `<text x="30" y="40" class="strategy-title">Strategy: ${strategy.name}</text>`;
+    svg += `<text x="30" y="45" class="strategy-title">Strategy: ${strategy.name}</text>`;
     if (strategy.description) {
-      svg += `<text x="30" y="60" class="tree-meta">${strategy.description.substring(0, 60)}${strategy.description.length > 60 ? '...' : ''}</text>`;
+      svg += `<text x="30" y="70" class="tree-meta">${strategy.description.substring(0, 80)}${strategy.description.length > 80 ? '...' : ''}</text>`;
     }
 
-    trees.forEach((tree: any, index: number) => {
-      const y = 90 + index * 120;
-      svg += `<rect x="30" y="${y}" width="${width - 60}" height="100" class="tree-box" />`;
-      svg += `<text x="50" y="${y + 25}" class="tree-title">${tree.goal.substring(0, 30)}${tree.goal.length > 30 ? '...' : ''}</text>`;
-      svg += `<text x="50" y="${y + 45}" class="tree-meta">Thoughts: ${tree.thoughts.size}</text>`;
-      svg += `<text x="50" y="${y + 65}" class="tree-meta">Max Depth: ${tree.maxDepth}</text>`;
-    });
+    let yOffset = 100;
+
+    // Trees section
+    if (trees.length > 0) {
+      svg += `<text x="30" y="${yOffset}" class="section-title">Trees (${trees.length})</text>`;
+      yOffset += 30;
+      
+      trees.forEach((tree: any, index: number) => {
+        const y = yOffset + index * 150;
+        svg += `<rect x="30" y="${y}" width="${width - 60}" height="140" class="tree-box" />`;
+        svg += `<text x="50" y="${y + 25}" class="tree-title">${tree.goal.substring(0, 40)}${tree.goal.length > 40 ? '...' : ''}</text>`;
+        svg += `<text x="50" y="${y + 45}" class="tree-meta">Thoughts: ${tree.thoughts.size} | Max Depth: ${tree.maxDepth}</text>`;
+        
+        // Show detailed thoughts with status colors
+        let thoughtY = y + 65;
+        let thoughtCount = 0;
+        tree.thoughts.forEach((thought: any) => {
+          if (thoughtCount >= 3) return; // Show max 3 thoughts
+          const stateClass = `state-${thought.state || 'pending'}`;
+          svg += `<rect x="50" y="${thoughtY}" width="${width - 100}" height="20" class="thought-box ${stateClass}" />`;
+          svg += `<text x="55" y="${thoughtY + 14}" class="thought-title">${thought.content}</text>`;
+          thoughtY += 25;
+          thoughtCount++;
+        });
+        
+        if (tree.thoughts.size > 3) {
+          svg += `<text x="50" y="${thoughtY + 5}" class="thought-meta">+${tree.thoughts.size - 3} more thoughts</text>`;
+        }
+      });
+      
+      yOffset += trees.length * 150 + 20;
+    }
+
+    // Workflows section
+    if (workflows.length > 0) {
+      svg += `<text x="30" y="${yOffset}" class="section-title">Workflows (${workflows.length})</text>`;
+      yOffset += 30;
+      
+      workflows.forEach((workflow: any, index: number) => {
+        const y = yOffset + index * 200;
+        svg += `<rect x="30" y="${y}" width="${width - 60}" height="190" class="workflow-box" />`;
+        svg += `<text x="50" y="${y + 25}" class="workflow-title">${workflow.name.substring(0, 40)}${workflow.name.length > 40 ? '...' : ''}</text>`;
+        svg += `<text x="50" y="${y + 45}" class="workflow-meta">Tasks: ${workflow.taskIds.length} | Status: ${workflow.status}</text>`;
+        
+        // Show detailed tasks with status colors
+        let taskY = y + 65;
+        let taskCount = 0;
+        workflow.taskIds.forEach((taskId: string, idx: number) => {
+          if (taskCount >= 4) return; // Show max 4 tasks
+          const task = this.taskService.getTask(taskId);
+          if (task) {
+            const statusClass = `status-${task.status || 'pending'}`;
+            const deps = task.dependencies && task.dependencies.length > 0 
+              ? `→ deps: ${task.dependencies.length}` 
+              : '';
+            svg += `<rect x="50" y="${taskY}" width="${width - 100}" height="25" class="task-box ${statusClass}" />`;
+            svg += `<text x="55" y="${taskY + 16}" class="task-title">${idx + 1}. ${task.name}</text>`;
+            svg += `<text x="${width - 150}" y="${taskY + 16}" class="task-meta">${task.status}${deps}</text>`;
+            taskY += 30;
+            taskCount++;
+          }
+        });
+        
+        if (workflow.taskIds.length > 4) {
+          svg += `<text x="50" y="${taskY + 5}" class="task-meta">+${workflow.taskIds.length - 4} more tasks</text>`;
+        }
+      });
+    }
 
     svg += '</svg>';
     return svg;

@@ -194,6 +194,70 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     handler: (_args: any, service: any) => service.getAllStrategies()
   },
   {
+    name: 'add_tree_to_strategy',
+    tool: {
+      name: 'add_tree_to_strategy',
+      description: 'Add a tree to a strategy',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          strategyId: { type: 'string', description: 'Strategy ID' },
+          treeId: { type: 'string', description: 'Tree ID' }
+        },
+        required: ['strategyId', 'treeId']
+      }
+    },
+    handler: (args: any, service: any) => service.addTreeToStrategy(args.strategyId, args.treeId)
+  },
+  {
+    name: 'remove_tree_from_strategy',
+    tool: {
+      name: 'remove_tree_from_strategy',
+      description: 'Remove a tree from a strategy',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          strategyId: { type: 'string', description: 'Strategy ID' },
+          treeId: { type: 'string', description: 'Tree ID' }
+        },
+        required: ['strategyId', 'treeId']
+      }
+    },
+    handler: (args: any, service: any) => service.removeTreeFromStrategy(args.strategyId, args.treeId)
+  },
+  {
+    name: 'add_workflow_to_strategy',
+    tool: {
+      name: 'add_workflow_to_strategy',
+      description: 'Add a workflow to a strategy',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          strategyId: { type: 'string', description: 'Strategy ID' },
+          workflowId: { type: 'string', description: 'Workflow ID' }
+        },
+        required: ['strategyId', 'workflowId']
+      }
+    },
+    handler: (args: any, service: any) => service.addWorkflowToStrategy(args.strategyId, args.workflowId)
+  },
+  {
+    name: 'remove_workflow_from_strategy',
+    tool: {
+      name: 'remove_workflow_from_strategy',
+      description: 'Remove a workflow from a strategy',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          strategyId: { type: 'string', description: 'Strategy ID' },
+          workflowId: { type: 'string', description: 'Workflow ID' }
+        },
+        required: ['strategyId', 'workflowId']
+      }
+    },
+    handler: (args: any, service: any) => service.removeWorkflowFromStrategy(args.strategyId, args.workflowId)
+  },
+  {
     name: 'clear_all',
     tool: {
       name: 'clear_all',
@@ -311,5 +375,18 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
       }
     },
     handler: (args: any, service: any) => service.moveTask(args.taskId, args)
+  },
+  {
+    name: 'deduplicate_strategies',
+    tool: {
+      name: 'deduplicate_strategies',
+      description: 'Deduplicate strategies by normalized name. Keeps the first occurrence of each unique normalized name and removes duplicates.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        required: []
+      }
+    },
+    handler: (_args: any, service: any) => Promise.resolve({ removed: service.deduplicateStrategies() })
   }
 ];

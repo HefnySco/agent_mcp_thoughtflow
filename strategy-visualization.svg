@@ -1,0 +1,25 @@
+<svg width="900" height="550" xmlns="http://www.w3.org/2000/svg"><style>
+      .strategy-box { fill: #e3f2fd; stroke: #1565c0; stroke-width: 2; rx: 8; }
+      .tree-box { fill: #f5f5f5; stroke: #666; stroke-width: 1; rx: 4; }
+      .workflow-box { fill: #fff3e0; stroke: #e65100; stroke-width: 1; rx: 4; }
+      .task-box { fill: #ffffff; stroke: #999; stroke-width: 1; rx: 3; }
+      .thought-box { fill: #ffffff; stroke: #999; stroke-width: 1; rx: 3; }
+      .strategy-title { font-family: Arial, sans-serif; font-size: 18px; font-weight: bold; fill: #1565c0; }
+      .section-title { font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; fill: #333; }
+      .tree-title { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #333; }
+      .workflow-title { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #e65100; }
+      .task-title { font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; fill: #333; }
+      .thought-title { font-family: Arial, sans-serif; font-size: 12px; font-weight: bold; fill: #333; }
+      .tree-meta { font-family: Arial, sans-serif; font-size: 11px; fill: #666; }
+      .workflow-meta { font-family: Arial, sans-serif; font-size: 11px; fill: #666; }
+      .task-meta { font-family: Arial, sans-serif; font-size: 10px; fill: #666; }
+      .thought-meta { font-family: Arial, sans-serif; font-size: 10px; fill: #666; }
+      .status-pending { fill: #fff9c4; }
+      .status-in-progress { fill: #b3e5fc; }
+      .status-completed { fill: #c8e6c9; }
+      .status-failed { fill: #ffcdd2; }
+      .state-pending { fill: #e0e0e0; }
+      .state-selected { fill: #c8e6c9; }
+      .state-evaluated { fill: #fff9c4; }
+      .state-verified { fill: #b3e5fc; }
+    </style><rect x="10" y="10" width="880" height="530" class="strategy-box" /><text x="30" y="45" class="strategy-title">Strategy: Test Strategy for Visualization</text><text x="30" y="70" class="tree-meta">A test strategy to demonstrate the new visualization</text><text x="30" y="100" class="section-title">Trees (1)</text><rect x="30" y="130" width="840" height="140" class="tree-box" /><text x="50" y="155" class="tree-title">Explore visualization options</text><text x="50" y="175" class="tree-meta">Thoughts: 3 | Max Depth: 10</text><rect x="50" y="195" width="800" height="20" class="thought-box state-pending" /><text x="55" y="209" class="thought-title">Consider different visualization approaches for the strategy</text><rect x="50" y="220" width="800" height="20" class="thought-box state-pending" /><text x="55" y="234" class="thought-title">Use SVG for crisp graphics</text><rect x="50" y="245" width="800" height="20" class="thought-box state-pending" /><text x="55" y="259" class="thought-title">Add color coding for different sections</text><text x="30" y="300" class="section-title">Workflows (1)</text><rect x="30" y="330" width="840" height="190" class="workflow-box" /><text x="50" y="355" class="workflow-title">Visualization Implementation Workflow</text><text x="50" y="375" class="workflow-meta">Tasks: 3 | Status: pending</text><rect x="50" y="395" width="800" height="25" class="task-box status-pending" /><text x="55" y="411" class="task-title">1. Design SVG layout</text><text x="750" y="411" class="task-meta">pending</text><rect x="50" y="425" width="800" height="25" class="task-box status-pending" /><text x="55" y="441" class="task-title">2. Implement color scheme</text><text x="750" y="441" class="task-meta">pending→ deps: 1</text><rect x="50" y="455" width="800" height="25" class="task-box status-pending" /><text x="55" y="471" class="task-title">3. Add task dependencies</text><text x="750" y="471" class="task-meta">pending→ deps: 1</text></svg>

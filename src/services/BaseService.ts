@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import type { IStorageAdapter, ThoughtflowState } from '../storage/IStorageAdapter.js';
 import { ThoughtflowError } from '../types/index.js';
 import { logger } from '../utils/logger.js';
@@ -104,6 +105,13 @@ export abstract class BaseService {
   }
 
   /**
+   * Set the state (for sharing state across services)
+   */
+  setState(state: ThoughtflowState): void {
+    this.state = state;
+  }
+
+  /**
    * Set auto-save mode
    */
   setAutoSave(enabled: boolean): void {
@@ -115,5 +123,43 @@ export abstract class BaseService {
    */
   setSaveDebounceMs(ms: number): void {
     this.saveDebounceMs = ms;
+  }
+
+  /**
+   * Normalize a string key for comparison.
+   * Trims whitespace, converts to lowercase, and collapses multiple spaces.
+   * This provides robust comparison against minor variations in spacing/casing.
+   */
+  protected normalizeKey(key: string): string {
+    return key
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+  }
+
+  /**
+   * Generate a unique ID.
+   * If a name/tag is provided, create a readable ID in the format:
+   *   slugified-name + short-uuid
+   * Otherwise return a pure UUID.
+   */
+  protected generateId(nameOrTag?: string | null): string {
+    const uuid = uuidv4();
+
+    if (!nameOrTag) {
+      return uuid;
+    }
+
+    // Create a clean slug from the name
+    const slug = nameOrTag
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')     // replace non-alphanumeric with dash
+      .replace(/^-+|-+$/g, '')         // trim leading/trailing dashes
+      .substring(0, 50);               // limit length
+
+    // Take last 8 characters of UUID for uniqueness
+    const shortUuid = uuid.split('-').pop()?.substring(0, 8) || uuid.substring(0, 8);
+
+    return `${slug}-${shortUuid}`;
   }
 }

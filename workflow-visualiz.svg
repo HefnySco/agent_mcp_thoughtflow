@@ -1,0 +1,11 @@
+<svg width="800" height="255" xmlns="http://www.w3.org/2000/svg"><style>
+      .workflow-box { fill: #fff3e0; stroke: #e65100; stroke-width: 2; rx: 8; }
+      .task-box { fill: #ffffff; stroke: #999; stroke-width: 1; rx: 3; }
+      .workflow-title { font-family: Arial, sans-serif; font-size: 18px; font-weight: bold; fill: #e65100; }
+      .task-title { font-family: Arial, sans-serif; font-size: 13px; font-weight: bold; fill: #333; }
+      .task-meta { font-family: Arial, sans-serif; font-size: 11px; fill: #666; }
+      .status-pending { fill: #fff9c4; }
+      .status-in-progress { fill: #b3e5fc; }
+      .status-completed { fill: #c8e6c9; }
+      .status-failed { fill: #ffcdd2; }
+    </style><rect x="10" y="10" width="780" height="235" class="workflow-box" /><text x="30" y="45" class="workflow-title">Workflow: Visualization Implementation Workflow</text><text x="30" y="70" class="task-meta">Tasks: 3 | Status: pending</text><rect x="30" y="95" width="740" height="30" class="task-box status-pending" /><text x="40" y="114" class="task-title">1. Design SVG layout</text><text x="680" y="114" class="task-meta">pending</text><rect x="30" y="130" width="740" height="30" class="task-box status-pending" /><text x="40" y="149" class="task-title">2. Implement color scheme</text><text x="680" y="149" class="task-meta">pending→ deps: 1</text><rect x="30" y="165" width="740" height="30" class="task-box status-pending" /><text x="40" y="184" class="task-title">3. Add task dependencies</text><text x="680" y="184" class="task-meta">pending→ deps: 1</text></svg>

@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 import type {
   Tree,
   Thought,
@@ -47,7 +46,7 @@ export class CognitiveBridgeService extends BaseService {
     validateRequiredString(params.treeId, 'treeId');
     validateRequiredString(params.thoughtId, 'thoughtId');
     
-    const tree = this.totService.getTree(params.treeId);
+    const tree = this.totService.getTreeFull(params.treeId);
     if (!tree) {
       throw new TreeNotFoundError(params.treeId);
     }
@@ -210,13 +209,14 @@ export class CognitiveBridgeService extends BaseService {
 
   /**
    * Create a lightweight explicit link between a thought and a task
+   * Supports bidirectional soft links for "inspired by" or "related to" relationships
    */
-  linkThoughtToTask(params: LinkThoughtToTaskParams): void {
+  linkThoughtToTask(params: LinkThoughtToTaskParams): { success: boolean; thoughtId: string; taskId: string; reason: string } {
     validateRequiredString(params.treeId, 'treeId');
     validateRequiredString(params.thoughtId, 'thoughtId');
     validateRequiredString(params.taskId, 'taskId');
     
-    const tree = this.totService.getTree(params.treeId);
+    const tree = this.totService.getTreeFull(params.treeId);
     if (!tree) {
       throw new TreeNotFoundError(params.treeId);
     }
@@ -233,19 +233,52 @@ export class CognitiveBridgeService extends BaseService {
     
     const now = new Date().toISOString();
     
-    // Update thought metadata
+    // Update thought metadata with bidirectional link
     thought.metadata = thought.metadata || {};
     thought.metadata.cognitive = thought.metadata.cognitive || {};
-    (thought.metadata.cognitive as CognitiveMetadata).linkedTaskIds = 
-      (thought.metadata.cognitive as CognitiveMetadata).linkedTaskIds || [];
-    (thought.metadata.cognitive as CognitiveMetadata).linkedTaskIds!.push(params.taskId);
+    const thoughtCognitive = thought.metadata.cognitive as CognitiveMetadata;
+    thoughtCognitive.linkedTaskIds = thoughtCognitive.linkedTaskIds || [];
     
-    // Update task metadata
+    // Prevent duplicate links
+    if (!thoughtCognitive.linkedTaskIds.includes(params.taskId)) {
+      thoughtCognitive.linkedTaskIds.push(params.taskId);
+    }
+    
+    // Update task metadata with bidirectional link
     task.metadata = task.metadata || {};
     task.metadata.cognitive = task.metadata.cognitive || {};
-    (task.metadata.cognitive as CognitiveMetadata).linkedThoughtIds = 
-      (task.metadata.cognitive as CognitiveMetadata).linkedThoughtIds || [];
-    (task.metadata.cognitive as CognitiveMetadata).linkedThoughtIds!.push(params.thoughtId);
+    const taskCognitive = task.metadata.cognitive as CognitiveMetadata;
+    taskCognitive.linkedThoughtIds = taskCognitive.linkedThoughtIds || [];
+    
+    // Prevent duplicate links
+    if (!taskCognitive.linkedThoughtIds.includes(params.thoughtId)) {
+      taskCognitive.linkedThoughtIds.push(params.thoughtId);
+    }
+    
+    // Update sync status
+    thoughtCognitive.syncStatus = 'synced';
+    thoughtCognitive.lastSyncedAt = now;
+    taskCognitive.syncStatus = 'synced';
+    taskCognitive.lastSyncedAt = now;
+    
+    // Add to provenance chain
+    thoughtCognitive.provenanceChain = thoughtCognitive.provenanceChain || [];
+    thoughtCognitive.provenanceChain.push({
+      type: 'link',
+      fromId: params.thoughtId,
+      toId: params.taskId,
+      timestamp: now,
+      reason: params.reason || 'Soft link established'
+    });
+    
+    taskCognitive.provenanceChain = taskCognitive.provenanceChain || [];
+    taskCognitive.provenanceChain.push({
+      type: 'link',
+      fromId: params.taskId,
+      toId: params.thoughtId,
+      timestamp: now,
+      reason: params.reason || 'Soft link established'
+    });
     
     // Create cognitive link
     this.createCognitiveLink({
@@ -262,7 +295,14 @@ export class CognitiveBridgeService extends BaseService {
     task.updatedAt = now;
     this.triggerSave();
     
-    logger.info(`Linked thought ${params.thoughtId} to task ${params.taskId}`);
+    logger.info(`Soft linked thought ${params.thoughtId} to task ${params.taskId}${params.reason ? ` (reason: ${params.reason})` : ''}`);
+    
+    return {
+      success: true,
+      thoughtId: params.thoughtId,
+      taskId: params.taskId,
+      reason: params.reason || 'Soft link established'
+    };
   }
 
   /**
@@ -316,7 +356,7 @@ export class CognitiveBridgeService extends BaseService {
    * Create a cognitive link
    */
   private createCognitiveLink(link: Omit<CognitiveLink, 'id'>): void {
-    const id = uuidv4();
+    const id = this.generateId(link.type);
     this.state.cognitiveLinks.set(id, { ...link, id });
   }
 
@@ -376,5 +416,26 @@ export class CognitiveBridgeService extends BaseService {
    */
   getCognitiveLinkCount(): number {
     return this.state.cognitiveLinks.size;
+  }
+
+  /**
+   * Deduplicate strategies and trees in the current state.
+   * This cleans up duplicate entries that may have been created before
+   * the deduplication logic was added.
+   * Returns an object with counts of removed duplicates.
+   */
+  deduplicateStrategiesAndTrees(): {
+    strategiesRemoved: number;
+    treesRemoved: number;
+  } {
+    const strategiesRemoved = this.taskService.deduplicateStrategies();
+    const treesRemoved = this.totService.deduplicateTrees();
+
+    logger.info(`Deduplication complete: ${strategiesRemoved} strategies, ${treesRemoved} trees removed`);
+
+    return {
+      strategiesRemoved,
+      treesRemoved
+    };
   }
 }

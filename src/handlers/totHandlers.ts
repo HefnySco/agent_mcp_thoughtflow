@@ -1,5 +1,5 @@
 import type { ToTService } from '../services/ToTService.js';
-import type { Tree, Thought, Strategy } from '../types/index.js';
+import type { Tree, Thought } from '../types/index.js';
 
 /**
  * Tree of Thoughts MCP Tool Handlers
@@ -148,39 +148,6 @@ export function registerTotHandlers(
     }
   );
 
-  /**
-   * Create a strategy
-   */
-  registerTool(
-    'create_strategy',
-    async (args: {
-      name: string;
-      description?: string;
-      metadata?: Record<string, any>;
-    }): Promise<Strategy> => {
-      return totService.createStrategy(args);
-    }
-  );
-
-  /**
-   * Get a strategy by ID
-   */
-  registerTool(
-    'get_strategy',
-    async (args: { id: string }): Promise<Strategy> => {
-      return totService.getStrategy(args.id);
-    }
-  );
-
-  /**
-   * Get all strategies
-   */
-  registerTool(
-    'list_strategies',
-    async (): Promise<Strategy[]> => {
-      return totService.getAllStrategies();
-    }
-  );
 
   /**
    * Clear all trees

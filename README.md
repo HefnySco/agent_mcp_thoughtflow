@@ -16,6 +16,7 @@ Modern LLM agents are excellent at **planning** (using techniques like Tree of T
 
 This server solves that gap by providing a **single, cohesive cognitive scaffold** where:
 
+- **Strategy** — Top-level organizer that groups related reasoning trees and execution workflows
 - **Tree of Thoughts** handles divergent exploration and evaluation
 - **Task Orchestrator** handles convergent execution with dependencies and workflows
 - **Cognitive Bridge Layer** enables seamless, bidirectional conversion between thoughts and executable tasks
@@ -44,7 +45,7 @@ Many agents follow this broken pattern:
 
 - `promote_thought_to_tasks` — Convert a thought (or entire subtree) into executable tasks with full provenance metadata
 - `spawn_tot_from_task` — When a task is blocked, spawn a fresh Tree of Thoughts from it for deeper analysis
-- `link_thought_to_task` — Lightweight explicit linking for provenance without full promotion
+- `link_thought_to_task` — Create soft bidirectional links between thoughts and tasks for "inspired by" or "related to" relationships
 - `get_cognitive_provenance` — Trace the complete reasoning → execution chain
 
 All bridge operations automatically maintain `metadata.cognitive` and create auditable `cognitiveLinks`.
@@ -63,6 +64,13 @@ All bridge operations automatically maintain `metadata.cognitive` and create aud
 - Multi-criteria evaluation (`score`, `creativity`, `risk`, custom criteria)
 - Pruning, backtracking, verification, and selection
 - Strategy grouping for organizing related reasoning sessions
+
+### Strategy Model (Top-Level Organizer)
+
+- **Strategy** groups related Trees of Thoughts and Workflows into cohesive units
+- Each Strategy can own multiple `treeIds` and `workflowIds`
+- Enables organizing complex projects by linking reasoning and execution
+- Tools: `add_tree_to_strategy`, `add_workflow_to_strategy`, `remove_tree_from_strategy`, `remove_workflow_from_strategy`
 
 ### Visualization & Introspection
 
@@ -146,7 +154,7 @@ spawn_tot_from_task({
 |------|---------|
 | `promote_thought_to_tasks` | Convert reasoning into tracked executable work |
 | `spawn_tot_from_task` | Spawn fresh reasoning from a blocked task |
-| `link_thought_to_task` | Create lightweight provenance links |
+| `link_thought_to_task` | Create soft bidirectional links for "inspired by" or "related to" relationships |
 | `get_cognitive_provenance` | Trace full reasoning → execution history |
 
 ### Task Orchestrator Tools
@@ -157,15 +165,15 @@ spawn_tot_from_task({
 | Workflows | `create_workflow`, `get_workflow`, `list_workflows`, `addTasksToWorkflow` |
 | Execution | `start_workflow_execution`, `advance_workflow_run`, `getReadyTasks` |
 | Hierarchy | `get_subtasks`, `move_task` |
-| Strategies | `create_strategy`, `get_strategy`, `list_strategies` |
+| Strategies | `create_strategy`, `get_strategy`, `list_strategies`, `add_tree_to_strategy`, `remove_tree_from_strategy` |
 
 ### Tree of Thoughts Tools
 
 | Category | Tools |
 |----------|-------|
 | Trees | `create_tree`, `get_tree`, `list_trees`, `delete_tree` |
-| Thoughts | `add_child`, `get_thought`, `evaluate_thought`, `verify_thought`, `select_thought`, `backtrack`, `prune_tree` |
-| Strategies | `create_strategy`, `get_strategy`, `list_strategies` |
+| Thoughts | `add_idea`, `get_thought`, `evaluate_thought`, `verify_thought`, `select_thought`, `backtrack`, `prune_tree` |
+| Strategies | `create_strategy`, `get_strategy`, `list_strategies`, `add_workflow_to_strategy`, `remove_workflow_from_strategy` |
 
 ### Visualization Tools
 
@@ -182,13 +190,39 @@ spawn_tot_from_task({
 
 The intended usage pattern for LLM agents:
 
-1. **Explore** — Use `create_tree` + `add_child` + `evaluate_thought` to explore solution space
+1. **Explore** — Use `create_tree` + `add_idea` + `evaluate_thought` to explore solution space
 2. **Commit** — Use `promote_thought_to_tasks` on the most promising branch
 3. **Execute** — Use `start_workflow_execution` + `advance_workflow_run` (or `getReadyTasks`)
 4. **Reflect** — If blocked, use `spawn_tot_from_task` on the stuck task
 5. **Audit** — Use `get_cognitive_provenance` when traceability is required
 
 This pattern turns ad-hoc reasoning into auditable, resumable, delegable work.
+
+---
+
+## Relationship Model
+
+The system uses a hierarchical relationship model for organizing cognitive work:
+
+```
+Strategy (Top-Level Organizer)
+├── treeIds: string[]          → Trees of Thoughts (reasoning)
+├── workflowIds: string[]      → Workflows (execution)
+└── metadata: Record<string, any>
+
+Idea (Thought) ↔ Task (Soft Bidirectional Links)
+├── Thought.metadata.cognitive.linkedTaskIds
+├── Task.metadata.cognitive.linkedThoughtIds
+├── syncStatus: 'synced' | 'outdated' | 'conflict'
+└── provenanceChain: ProvenanceEntry[]
+```
+
+### Key Relationships
+
+- **Strategy → Trees + Workflows**: Strategies organize related reasoning and execution into cohesive units
+- **Idea ↔ Task**: Soft bidirectional links enable "inspired by" or "related to" relationships without full promotion
+- **Promotion**: Full conversion from thought subtree to executable tasks with provenance tracking
+- **Spawning**: Create new reasoning trees from blocked tasks for deeper analysis
 
 ---
 

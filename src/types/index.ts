@@ -156,6 +156,7 @@ export interface Strategy {
   description?: string;
   status: 'active' | 'paused' | 'completed' | 'archived';
   treeIds: string[];
+  workflowIds: string[];
   createdAt: string;
   updatedAt: string;
   metadata?: Record<string, any>;

@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Thoughtflow Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            gray: {
+              850: '#1f2937',
+              900: '#111827',
+              950: '#030712',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #030712;
+      color: #e5e7eb;
+    }
+    .card {
+      background-color: #111827;
+      border: 1px solid #374151;
+    }
+    .status-pending { color: #fbbf24; }
+    .status-in_progress { color: #60a5fa; }
+    .status-completed { color: #34d399; }
+    .status-failed { color: #f87171; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div class="container mx-auto px-4 py-8">
+    <!-- Header -->
+    <header class="flex justify-between items-center mb-8">
+      <div>
+        <h1 class="text-3xl font-bold text-white">Thoughtflow Dashboard</h1>
+        <p class="text-gray-400 mt-1">Unified cognitive scaffold monitoring</p>
+      </div>
+      <div class="flex items-center gap-4">
+        <div id="change-indicator" class="hidden flex items-center gap-2">
+          <span class="w-2 h-2 bg-yellow-400 rounded-full animate-ping"></span>
+          <span class="text-xs text-yellow-400">Updated</span>
+        </div>
+        <div id="status-indicator" class="flex items-center gap-2">
+          <span class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
+          <span class="text-sm text-gray-400">Connected</span>
+        </div>
+        <button onclick="toggleAutoRefresh()" id="auto-refresh-btn" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors">
+          Auto: ON
+        </button>
+        <button onclick="refreshData()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+          Refresh
+        </button>
+      </div>
+    </header>
+
+    <!-- Overview Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+      <div class="card rounded-lg p-6">
+        <h3 class="text-gray-400 text-sm font-medium mb-2">Strategies</h3>
+        <p id="total-strategies" class="text-3xl font-bold text-white">0</p>
+      </div>
+      <div class="card rounded-lg p-6">
+        <h3 class="text-gray-400 text-sm font-medium mb-2">Trees</h3>
+        <p id="total-trees" class="text-3xl font-bold text-white">0</p>
+      </div>
+      <div class="card rounded-lg p-6">
+        <h3 class="text-gray-400 text-sm font-medium mb-2">Tasks</h3>
+        <p id="total-tasks" class="text-3xl font-bold text-white">0</p>
+      </div>
+      <div class="card rounded-lg p-6">
+        <h3 class="text-gray-400 text-sm font-medium mb-2">Workflows</h3>
+        <p id="total-workflows" class="text-3xl font-bold text-white">0</p>
+      </div>
+      <div class="card rounded-lg p-6">
+        <h3 class="text-gray-400 text-sm font-medium mb-2">Cognitive Links</h3>
+        <p id="total-links" class="text-3xl font-bold text-white">0</p>
+      </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+      <!-- Strategies Panel -->
+      <div class="card rounded-lg p-6">
+        <h2 class="text-xl font-bold text-white mb-4">Strategies</h2>
+        <div id="strategies-list" class="space-y-3">
+          <p class="text-gray-500 text-sm">Loading strategies...</p>
+        </div>
+      </div>
+
+      <!-- Tasks Panel -->
+      <div class="card rounded-lg p-6">
+        <h2 class="text-xl font-bold text-white mb-4">Tasks</h2>
+        <div class="grid grid-cols-4 gap-4 mb-4">
+          <div class="text-center">
+            <p class="text-2xl font-bold status-pending" id="tasks-pending">0</p>
+            <p class="text-xs text-gray-400">Pending</p>
+          </div>
+          <div class="text-center">
+            <p class="text-2xl font-bold status-in_progress" id="tasks-in_progress">0</p>
+            <p class="text-xs text-gray-400">In Progress</p>
+          </div>
+          <div class="text-center">
+            <p class="text-2xl font-bold status-completed" id="tasks-completed">0</p>
+            <p class="text-xs text-gray-400">Completed</p>
+          </div>
+          <div class="text-center">
+            <p class="text-2xl font-bold status-failed" id="tasks-failed">0</p>
+            <p class="text-xs text-gray-400">Failed</p>
+          </div>
+        </div>
+        <div id="tasks-list" class="space-y-2 max-h-64 overflow-y-auto">
+          <p class="text-gray-500 text-sm">Loading tasks...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trees Panel -->
+    <div class="card rounded-lg p-6 mb-8">
+      <h2 class="text-xl font-bold text-white mb-4">Trees / Ideas</h2>
+      <div id="trees-list" class="space-y-3">
+        <p class="text-gray-500 text-sm">Loading trees...</p>
+      </div>
+    </div>
+
+    <!-- Tree Visualization Panel -->
+    <div id="tree-visualization-panel" class="card rounded-lg p-6 mb-8 hidden">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-bold text-white">Tree Visualization</h2>
+        <button onclick="closeTreeVisualization()" class="text-gray-400 hover:text-white">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <pre id="tree-visualization-content" class="bg-gray-900 rounded p-4 text-sm text-gray-300 overflow-x-auto font-mono"></pre>
+    </div>
+
+    <!-- Workflows Panel -->
+    <div class="card rounded-lg p-6 mb-8">
+      <h2 class="text-xl font-bold text-white mb-4">Workflows</h2>
+      <div id="workflows-list" class="space-y-3">
+        <p class="text-gray-500 text-sm">Loading workflows...</p>
+      </div>
+    </div>
+
+    <!-- Cognitive Links Panel -->
+    <div class="card rounded-lg p-6 mb-8">
+      <h2 class="text-xl font-bold text-white mb-4">Cognitive Links & Provenance</h2>
+      <div id="links-list" class="space-y-3">
+        <p class="text-gray-500 text-sm">Loading cognitive links...</p>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="text-center text-gray-500 text-sm">
+      <p>Last updated: <span id="last-updated">-</span></p>
+      <p class="mt-1">Thoughtflow MCP Server Dashboard</p>
+    </footer>
+  </div>
+
+  <script>
+    let state = {
+      strategies: [],
+      tasks: [],
+      trees: [],
+      workflows: [],
+      cognitiveLinks: []
+    };
+    let lastModified = null;
+    let autoRefreshInterval = null;
+    let isAutoRefresh = true;
+
+    async function fetchStateInfo() {
+      try {
+        const response = await fetch('/api/state/info');
+        if (!response.ok) throw new Error('Failed to fetch state info');
+        const info = await response.json();
+        return info;
+      } catch (error) {
+        console.error('Error fetching state info:', error);
+        return null;
+      }
+    }
+
+    async function fetchState() {
+      try {
+        const response = await fetch('/api/state');
+        if (!response.ok) throw new Error('Failed to fetch state');
+        const rawState = await response.json();
+        
+        // Convert objects to arrays for dashboard
+        const newState = {
+          strategies: Object.values(rawState.strategies || {}),
+          tasks: Object.values(rawState.tasks || {}),
+          trees: Object.values(rawState.trees || {}),
+          workflows: Object.values(rawState.workflows || {}),
+          cognitiveLinks: Object.values(rawState.cognitiveLinks || {})
+        };
+        
+        // Check if state actually changed
+        const stateChanged = JSON.stringify(newState) !== JSON.stringify(state);
+        state = newState;
+        
+        updateDashboard(stateChanged);
+        document.getElementById('status-indicator').innerHTML = `
+          <span class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
+          <span class="text-sm text-gray-400">Connected</span>
+        `;
+        
+        // Update last modified
+        const info = await fetchStateInfo();
+        if (info && info.lastModified) {
+          lastModified = info.lastModified;
+        }
+      } catch (error) {
+        console.error('Error fetching state:', error);
+        document.getElementById('status-indicator').innerHTML = `
+          <span class="w-3 h-3 bg-red-500 rounded-full"></span>
+          <span class="text-sm text-gray-400">Disconnected</span>
+        `;
+      }
+    }
+
+    function updateDashboard(stateChanged = false) {
+      // Flash indicator if state changed
+      if (stateChanged) {
+        const indicator = document.getElementById('change-indicator');
+        if (indicator) {
+          indicator.classList.remove('hidden');
+          setTimeout(() => indicator.classList.add('hidden'), 2000);
+        }
+      }
+
+      // Update overview cards
+      document.getElementById('total-strategies').textContent = state.strategies?.length || 0;
+      document.getElementById('total-trees').textContent = state.trees?.length || 0;
+      document.getElementById('total-tasks').textContent = state.tasks?.length || 0;
+      document.getElementById('total-workflows').textContent = state.workflows?.length || 0;
+      document.getElementById('total-links').textContent = state.cognitiveLinks?.length || 0;
+
+      // Update task status breakdown
+      const tasks = state.tasks || [];
+      const pending = tasks.filter(t => t.status === 'pending').length;
+      const inProgress = tasks.filter(t => t.status === 'in_progress').length;
+      const completed = tasks.filter(t => t.status === 'completed').length;
+      const failed = tasks.filter(t => t.status === 'failed').length;
+
+      document.getElementById('tasks-pending').textContent = pending;
+      document.getElementById('tasks-in_progress').textContent = inProgress;
+      document.getElementById('tasks-completed').textContent = completed;
+      document.getElementById('tasks-failed').textContent = failed;
+
+      // Update strategies list
+      const strategiesList = document.getElementById('strategies-list');
+      if (state.strategies?.length > 0) {
+        strategiesList.innerHTML = state.strategies.map(s => `
+          <div class="bg-gray-800 rounded p-3">
+            <h4 class="font-medium text-white">${escapeHtml(s.name)}</h4>
+            <p class="text-xs text-gray-400 mt-1">${s.description || 'No description'}</p>
+            <div class="flex gap-4 mt-2 text-xs">
+              <span class="text-blue-400">Trees: ${s.treeIds?.length || 0}</span>
+              <span class="text-green-400">Workflows: ${s.workflowIds?.length || 0}</span>
+            </div>
+          </div>
+        `).join('');
+      } else {
+        strategiesList.innerHTML = '<p class="text-gray-500 text-sm">No strategies</p>';
+      }
+
+      // Update tasks list (show recent 10)
+      const tasksList = document.getElementById('tasks-list');
+      if (tasks.length > 0) {
+        const recentTasks = tasks.slice(-10).reverse();
+        tasksList.innerHTML = recentTasks.map(t => `
+          <div class="flex items-center justify-between bg-gray-800 rounded p-2">
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-white truncate">${escapeHtml(t.name)}</p>
+              <p class="text-xs text-gray-400 truncate">${escapeHtml(t.description || '')}</p>
+            </div>
+            <span class="ml-2 text-xs status-${t.status}">${t.status}</span>
+          </div>
+        `).join('');
+      } else {
+        tasksList.innerHTML = '<p class="text-gray-500 text-sm">No tasks</p>';
+      }
+
+      // Update trees list
+      const treesList = document.getElementById('trees-list');
+      if (state.trees?.length > 0) {
+        treesList.innerHTML = state.trees.map(t => `
+          <div class="bg-gray-800 rounded p-3">
+            <div class="flex justify-between items-start">
+              <div class="flex-1">
+                <h4 class="font-medium text-white">${escapeHtml(t.goal)}</h4>
+                <p class="text-xs text-gray-400 mt-1">Thoughts: ${Object.keys(t.thoughts || {}).length}</p>
+                <p class="text-xs text-gray-400">Max Depth: ${t.maxDepth || 10}</p>
+              </div>
+              <button onclick="visualizeTree('${t.id}')" class="ml-4 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors">
+                Visualize
+              </button>
+            </div>
+          </div>
+        `).join('');
+      } else {
+        treesList.innerHTML = '<p class="text-gray-500 text-sm">No trees</p>';
+      }
+
+      // Update workflows list
+      const workflowsList = document.getElementById('workflows-list');
+      if (state.workflows?.length > 0) {
+        workflowsList.innerHTML = state.workflows.map(w => `
+          <div class="bg-gray-800 rounded p-3">
+            <h4 class="font-medium text-white">${escapeHtml(w.name)}</h4>
+            <p class="text-xs text-gray-400 mt-1">${escapeHtml(w.description || 'No description')}</p>
+            <p class="text-xs text-gray-400 mt-1">Tasks: ${w.taskIds?.length || 0}</p>
+          </div>
+        `).join('');
+      } else {
+        workflowsList.innerHTML = '<p class="text-gray-500 text-sm">No workflows</p>';
+      }
+
+      // Update cognitive links list
+      const linksList = document.getElementById('links-list');
+      const links = state.cognitiveLinks || [];
+      if (links.length > 0) {
+        linksList.innerHTML = links.slice(0, 10).map(l => `
+          <div class="bg-gray-800 rounded p-3">
+            <div class="flex justify-between items-start">
+              <div class="flex-1">
+                <p class="text-sm text-white"><span class="text-blue-400">Thought:</span> ${escapeHtml(l.thoughtId || 'N/A')}</p>
+                <p class="text-sm text-white"><span class="text-green-400">Task:</span> ${escapeHtml(l.taskId || 'N/A')}</p>
+                <p class="text-xs text-gray-400 mt-1">Reason: ${escapeHtml(l.reason || 'No reason')}</p>
+              </div>
+              <span class="text-xs text-gray-500">${l.treeId ? `Tree: ${l.treeId.substring(0, 8)}...` : ''}</span>
+            </div>
+          </div>
+        `).join('');
+        if (links.length > 10) {
+          linksList.innerHTML += `<p class="text-gray-500 text-sm mt-2">+${links.length - 10} more links</p>`;
+        }
+      } else {
+        linksList.innerHTML = '<p class="text-gray-500 text-sm">No cognitive links</p>';
+      }
+
+      // Update timestamp
+      document.getElementById('last-updated').textContent = new Date().toLocaleString();
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function refreshData() {
+      fetchState();
+    }
+
+    function toggleAutoRefresh() {
+      isAutoRefresh = !isAutoRefresh;
+      const btn = document.getElementById('auto-refresh-btn');
+      
+      if (isAutoRefresh) {
+        btn.textContent = 'Auto: ON';
+        btn.classList.remove('bg-red-700', 'hover:bg-red-600');
+        btn.classList.add('bg-gray-700', 'hover:bg-gray-600');
+        if (!autoRefreshInterval) {
+          autoRefreshInterval = setInterval(fetchState, 5000);
+        }
+      } else {
+        btn.textContent = 'Auto: OFF';
+        btn.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+        btn.classList.add('bg-red-700', 'hover:bg-red-600');
+        if (autoRefreshInterval) {
+          clearInterval(autoRefreshInterval);
+          autoRefreshInterval = null;
+        }
+      }
+    }
+
+    function visualizeTree(treeId) {
+      const tree = state.trees?.find(t => t.id === treeId);
+      if (!tree) return;
+
+      const panel = document.getElementById('tree-visualization-panel');
+      const content = document.getElementById('tree-visualization-content');
+
+      const ascii = generateTreeAscii(tree);
+      content.textContent = ascii;
+      panel.classList.remove('hidden');
+      panel.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function closeTreeVisualization() {
+      const panel = document.getElementById('tree-visualization-panel');
+      panel.classList.add('hidden');
+    }
+
+    function generateTreeAscii(tree) {
+      const lines = [];
+      lines.push(`Tree: ${tree.id}`);
+      lines.push(`Goal: ${tree.goal}`);
+      lines.push(`Max Depth: ${tree.maxDepth}`);
+      lines.push('');
+
+      const thoughts = tree.thoughts || {};
+      const visualizeThought = (thoughtId, prefix, isLast) => {
+        const thought = thoughts[thoughtId];
+        if (!thought) return;
+
+        const connector = isLast ? '└── ' : '├── ';
+        const content = thought.content;
+        const evalScore = thought.evaluation !== null && thought.evaluation !== undefined ? ` [${thought.evaluation}]` : '';
+        const stateIcon = getStateIcon(thought.state);
+
+        lines.push(`${prefix}${connector}${stateIcon} ${content}${evalScore}`);
+
+        const children = thought.children || [];
+        const newPrefix = prefix + (isLast ? '    ' : '│   ');
+
+        children.forEach((childId, index) => {
+          visualizeThought(childId, newPrefix, index === children.length - 1);
+        });
+      };
+
+      if (tree.rootId) {
+        visualizeThought(tree.rootId, '', true);
+      }
+
+      return lines.join('\n');
+    }
+
+    function getStateIcon(state) {
+      switch (state) {
+        case 'pending': return '○';
+        case 'evaluated': return '◎';
+        case 'selected': return '✓';
+        case 'pruned': return '✗';
+        default: return '?';
+      }
+    }
+
+    // Initial load
+    fetchState();
+
+    // Start auto-refresh (5 seconds)
+    autoRefreshInterval = setInterval(fetchState, 5000);
+  </script>
+</body>
+</html>
