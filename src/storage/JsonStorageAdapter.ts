@@ -120,7 +120,8 @@ export class JsonStorageAdapter implements IStorageAdapter {
       await fs.writeFile(tempPath, JSON.stringify(data, null, 2));
       await fs.rename(tempPath, this.storagePath);
     } catch (err) {
-      throw new ThoughtflowError('Failed to save state to JSON file', 'STORAGE_ERROR');
+      const cause = err instanceof Error ? err.message : String(err);
+      throw new ThoughtflowError(`Failed to save state to JSON file: ${cause}`, 'STORAGE_ERROR');
     }
   }
 

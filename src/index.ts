@@ -104,10 +104,12 @@ class ThoughtflowServer {
     // Create VisualizationService after services are properly initialized
     this.visualizationService = new VisualizationService(this.taskService, this.totService, this.bridgeService);
 
-    // Reduce debounce delay to ensure data persists before shutdown
-    this.taskService.setSaveDebounceMs(100);
-    this.totService.setSaveDebounceMs(100);
-    this.bridgeService.setSaveDebounceMs(100);
+    // 300ms debounce: coalesces rapid consecutive writes into a single flush
+    // while staying short enough that data persists before shutdown.
+    // shutdown() calls forceSave() so clean-exit safety is unaffected.
+    this.taskService.setSaveDebounceMs(300);
+    this.totService.setSaveDebounceMs(300);
+    this.bridgeService.setSaveDebounceMs(300);
 
     this.server = new Server(
       {
