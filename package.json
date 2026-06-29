@@ -1,6 +1,6 @@
 {
   "name": "agent_mcp_thoughtflow",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Unified cognitive scaffold for LLM agents — structured reasoning (Tree of Thoughts), reliable execution (Task Orchestrator), and bidirectional bridge between thought and action.",
   "type": "module",
   "main": "dist/index.js",
