@@ -116,7 +116,9 @@ export class JsonStorageAdapter implements IStorageAdapter {
 
       const dir = path.dirname(this.storagePath);
       await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(this.storagePath, JSON.stringify(data, null, 2));
+      const tempPath = `${this.storagePath}.tmp`;
+      await fs.writeFile(tempPath, JSON.stringify(data, null, 2));
+      await fs.rename(tempPath, this.storagePath);
     } catch (err) {
       throw new ThoughtflowError('Failed to save state to JSON file', 'STORAGE_ERROR');
     }

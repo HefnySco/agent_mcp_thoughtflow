@@ -175,7 +175,7 @@ describe('CognitiveBridgeService', () => {
       assert.ok(result.treeId);
       assert.ok(result.rootThoughtId);
 
-      const tree = totService.getTree(result.treeId);
+      const tree = (totService as any).getTreeFull(result.treeId);
       assert.strictEqual(tree.goal, 'Explore alternatives');
       assert.strictEqual(tree.metadata?.sourceTaskId, task.id);
 
@@ -210,7 +210,7 @@ describe('CognitiveBridgeService', () => {
         reason: 'Related work'
       });
 
-      const thought = totService.getThought(tree.id, tree.rootId);
+      const thought = (totService as any).getThoughtFull(tree.id, tree.rootId);
       assert.ok(thought.metadata?.cognitive?.linkedTaskIds?.includes(task.id));
 
       const updatedTask = taskService.getTask(task.id);

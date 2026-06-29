@@ -1,7 +1,8 @@
 import type {
   Tree,
   Thought,
-  Strategy
+  Strategy,
+  LLMProvider
 } from '../types/index.js';
 import type { IStorageAdapter } from '../storage/IStorageAdapter.js';
 import {
@@ -14,12 +15,27 @@ import { BaseService } from './BaseService.js';
 import { logger } from '../utils/logger.js';
 import { validateRequiredString, validateId, validateEvaluationScore } from '../utils/validators.js';
 
+export interface ToTServiceConfig {
+  llmProvider?: LLMProvider | null;
+  strictLLM?: boolean;
+  cognitiveBridgeService?: any; // CognitiveBridgeService to avoid circular dependency
+}
+
 /**
  * ToTService manages Tree of Thoughts for systematic reasoning
  */
 export class ToTService extends BaseService {
-  constructor(storageAdapter: IStorageAdapter) {
+  // @ts-ignore - LLM provider infrastructure in place for future use
+  private llmProvider?: LLMProvider | null;
+  // @ts-ignore - LLM provider infrastructure in place for future use
+  private strictLLM: boolean;
+  private cognitiveBridgeService?: any;
+
+  constructor(storageAdapter: IStorageAdapter, config?: ToTServiceConfig) {
     super(storageAdapter, 'ToTService');
+    this.llmProvider = config?.llmProvider;
+    this.strictLLM = config?.strictLLM ?? false;
+    this.cognitiveBridgeService = config?.cognitiveBridgeService;
   }
 
   /**
@@ -91,6 +107,12 @@ export class ToTService extends BaseService {
     this.state.trees.set(treeId, tree);
     this.triggerSave();
     logger.info(`Created tree: ${treeId} - ${params.goal} (normalized: ${normalizedGoal})`);
+
+    // Enforce cognitive hierarchy if cognitiveBridgeService is available
+    if (this.cognitiveBridgeService) {
+      this.cognitiveBridgeService.ensureCognitiveHierarchy(tree, 'tree', params.goal);
+    }
+
     // Return minimal summary for LLM efficiency
     return { id: treeId, goal: params.goal, rootId } as Tree;
   }
@@ -245,19 +267,43 @@ export class ToTService extends BaseService {
   }
 
   /**
-   * Get a thought by ID
+   * Get a thought by ID (minimal summary for LLM efficiency)
    */
   getThought(treeId: string, thoughtId: string): Thought {
     validateId(treeId, 'Tree');
     validateId(thoughtId, 'Thought');
-    
-    const tree = this.getTree(treeId);
+
+    const tree = this.getTreeFull(treeId);
     const thought = tree.thoughts.get(thoughtId);
-    
+
     if (!thought) {
       throw new ThoughtNotFoundError(treeId, thoughtId);
     }
-    
+
+    // Return minimal summary for LLM efficiency
+    return {
+      id: thought.id,
+      content: thought.content,
+      state: thought.state,
+      evaluation: thought.evaluation,
+      parentId: thought.parentId
+    } as Thought;
+  }
+
+  /**
+   * Get a thought by ID with full details (for dashboard/internal use)
+   */
+  getThoughtFull(treeId: string, thoughtId: string): Thought {
+    validateId(treeId, 'Tree');
+    validateId(thoughtId, 'Thought');
+
+    const tree = this.getTreeFull(treeId);
+    const thought = tree.thoughts.get(thoughtId);
+
+    if (!thought) {
+      throw new ThoughtNotFoundError(treeId, thoughtId);
+    }
+
     return thought;
   }
 
@@ -360,19 +406,15 @@ export class ToTService extends BaseService {
   }): Thought {
     const tree = this.getTreeFull(params.treeId);
     const thought = tree.thoughts.get(params.thoughtId);
-    
+
     if (!thought) {
       throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
     }
-    
-    if (thought.verified !== true) {
-      throw new ValidationError(`Cannot select unverified thought: ${params.thoughtId}. Use verify_thought first.`, 'thoughtId');
-    }
-    
+
     thought.state = 'selected';
     tree.updatedAt = new Date().toISOString();
     this.triggerSave();
-    
+
     // Return minimal summary
     return { id: thought.id, content: thought.content, state: thought.state } as Thought;
   }
@@ -390,6 +432,9 @@ export class ToTService extends BaseService {
     if (!thought) {
       throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
     }
+    
+    // Mark the target thought as pruned
+    thought.state = 'pruned';
     
     // Mark all descendants as pruned
     const pruneDescendants = (thoughtId: string) => {
@@ -499,5 +544,267 @@ export class ToTService extends BaseService {
    */
   clearAll(): void {
     this.clearAllTrees();
+  }
+  /**
+   * Generate child thoughts using LLM
+   */
+  async generateChildrenWithLLM(params: {
+    treeId: string;
+    parentId: string;
+    numChildren?: number;
+    temperature?: number;
+  }): Promise<Thought[]> {
+    validateRequiredString(params.treeId, 'treeId');
+    validateRequiredString(params.parentId, 'parentId');
+    
+    if (!this.llmProvider) {
+      throw new ThoughtflowError('LLM provider not configured', 'LLM_NOT_CONFIGURED');
+    }
+
+    const tree = this.getTreeFull(params.treeId);
+    const parentThought = tree.thoughts.get(params.parentId);
+    
+    if (!parentThought) {
+      throw new ThoughtNotFoundError(params.treeId, params.parentId);
+    }
+
+    const numChildren = params.numChildren || 3;
+    const temperature = params.temperature || 0.7;
+
+    // Build context from parent and tree goal
+    const context = `Goal: ${tree.goal}\nParent thought: ${parentThought.content}\nDepth: ${parentThought.depth}`;
+
+    // Generate thoughts using LLM
+    const generatedContents = await this.llmProvider.generateThoughts(
+      context,
+      numChildren,
+      undefined,
+      temperature
+    );
+
+    // Add each generated thought as a child
+    const newThoughts: Thought[] = [];
+    for (const content of generatedContents) {
+      const childThought = this.addChildThought({
+        treeId: params.treeId,
+        parentId: params.parentId,
+        content: content.trim(),
+        metadata: { generatedBy: 'llm' }
+      });
+      newThoughts.push(childThought);
+    }
+
+    logger.info(`Generated ${newThoughts.length} child thoughts using LLM for parent ${params.parentId}`);
+    return newThoughts;
+  }
+
+  /**
+   * Evaluate a thought using LLM
+   */
+  async evaluateWithLLM(params: {
+    treeId: string;
+    thoughtId: string;
+    useLLMJudge?: boolean;
+  }): Promise<Thought> {
+    validateRequiredString(params.treeId, 'treeId');
+    validateRequiredString(params.thoughtId, 'thoughtId');
+    
+    if (!this.llmProvider || !this.llmProvider.evaluateThoughtStructured) {
+      throw new ThoughtflowError('LLM provider does not support structured evaluation', 'LLM_NOT_SUPPORTED');
+    }
+
+    const tree = this.getTreeFull(params.treeId);
+    const thought = tree.thoughts.get(params.thoughtId);
+    
+    if (!thought) {
+      throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
+    }
+
+    // Build context for evaluation
+    const context = `Goal: ${tree.goal}\nThought: ${thought.content}`;
+
+    // Get structured evaluation from LLM
+    const evaluation = await this.llmProvider.evaluateThoughtStructured(
+      thought.content,
+      tree.goal,
+      context
+    );
+
+    // Update thought with evaluation
+    thought.evaluation = evaluation.overallScore;
+    thought.state = 'evaluated';
+    thought.creativity = evaluation.creativity;
+    thought.risk = evaluation.risk;
+    thought.criteriaScores = evaluation.criteriaScores;
+    thought.metadata = thought.metadata || {};
+    thought.metadata.evaluationReasoning = evaluation.reasoning;
+    thought.metadata.evaluatedBy = 'llm';
+
+    tree.updatedAt = new Date().toISOString();
+    this.triggerSave();
+
+    logger.info(`Evaluated thought ${params.thoughtId} using LLM with score ${evaluation.overallScore}`);
+    
+    // Return minimal summary
+    return { 
+      id: thought.id, 
+      content: thought.content, 
+      state: thought.state, 
+      evaluation: thought.evaluation,
+      creativity: thought.creativity,
+      risk: thought.risk
+    } as Thought;
+  }
+
+  /**
+   * Refine a thought using LLM
+   */
+  async refineThought(params: {
+    treeId: string;
+    thoughtId: string;
+    goal?: string;
+  }): Promise<Thought> {
+    validateRequiredString(params.treeId, 'treeId');
+    validateRequiredString(params.thoughtId, 'thoughtId');
+    
+    if (!this.llmProvider || !this.llmProvider.refineThought) {
+      throw new ThoughtflowError('LLM provider does not support thought refinement', 'LLM_NOT_SUPPORTED');
+    }
+
+    const tree = this.getTreeFull(params.treeId);
+    const thought = tree.thoughts.get(params.thoughtId);
+    
+    if (!thought) {
+      throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
+    }
+
+    const goal = params.goal || tree.goal;
+
+    // Refine thought using LLM
+    const refinedContent = await this.llmProvider.refineThought(
+      thought.content,
+      goal
+    );
+
+    // Update thought with refined content
+    thought.content = refinedContent.trim();
+    thought.updatedAt = new Date().toISOString();
+    thought.metadata = thought.metadata || {};
+    thought.metadata.refinedBy = 'llm';
+
+    tree.updatedAt = new Date().toISOString();
+    this.triggerSave();
+
+    logger.info(`Refined thought ${params.thoughtId} using LLM`);
+    
+    // Return minimal summary
+    return { 
+      id: thought.id, 
+      content: thought.content, 
+      state: thought.state 
+    } as Thought;
+  }
+
+  /**
+   * Synthesize multiple thoughts using LLM
+   */
+  async synthesizeThoughts(params: {
+    treeId: string;
+    thoughtIds: string[];
+    newParentId?: string;
+  }): Promise<Thought> {
+    validateRequiredString(params.treeId, 'treeId');
+    
+    if (!this.llmProvider || !this.llmProvider.synthesizeThoughts) {
+      throw new ThoughtflowError('LLM provider does not support thought synthesis', 'LLM_NOT_SUPPORTED');
+    }
+
+    const tree = this.getTreeFull(params.treeId);
+    
+    // Get all thoughts to synthesize
+    const thoughtsToSynthesize: string[] = [];
+    let parentId: string | null = null;
+    
+    for (const thoughtId of params.thoughtIds) {
+      const thought = tree.thoughts.get(thoughtId);
+      if (!thought) {
+        throw new ThoughtNotFoundError(params.treeId, thoughtId);
+      }
+      thoughtsToSynthesize.push(thought.content);
+      if (parentId === null) {
+        parentId = thought.parentId;
+      }
+    }
+
+    // Use provided newParentId or common parent
+    const finalParentId = params.newParentId || parentId;
+
+    // Synthesize thoughts using LLM
+    const synthesizedContent = await this.llmProvider.synthesizeThoughts(
+      thoughtsToSynthesize,
+      tree.goal
+    );
+
+    // Add synthesized thought as a child
+    const synthesizedThought = this.addChildThought({
+      treeId: params.treeId,
+      parentId: finalParentId || tree.rootId,
+      content: synthesizedContent.trim(),
+      metadata: { 
+        synthesizedFrom: params.thoughtIds,
+        synthesizedBy: 'llm'
+      }
+    });
+
+    logger.info(`Synthesized ${params.thoughtIds.length} thoughts into ${synthesizedThought.id} using LLM`);
+    return synthesizedThought;
+  }
+
+  /**
+   * Get LLM provider status
+   */
+  async getLLMStatus(): Promise<{
+    providerType: string;
+    model?: string;
+    connected: boolean;
+    available: boolean;
+  }> {
+    const status = {
+      providerType: 'none',
+      model: undefined as string | undefined,
+      connected: false,
+      available: false
+    };
+
+    if (!this.llmProvider) {
+      return status;
+    }
+
+    // Determine provider type
+    if (this.llmProvider.constructor.name === 'OllamaLLMProvider') {
+      status.providerType = 'ollama';
+      // Try to get connection status if available
+      if ('checkConnection' in this.llmProvider) {
+        status.connected = await (this.llmProvider as any).checkConnection();
+      }
+      if ('listModels' in this.llmProvider && status.connected) {
+        try {
+          const models = await (this.llmProvider as any).listModels();
+          status.available = models.length > 0;
+        } catch {
+          status.available = false;
+        }
+      }
+    } else if (this.llmProvider.constructor.name === 'GrokLLMProvider') {
+      status.providerType = 'grok';
+      status.connected = true;
+      status.available = true;
+    } else if (this.llmProvider.constructor.name === 'MockLLMProvider') {
+      status.providerType = 'mock';
+      status.connected = true;
+      status.available = true;
+    }
+
+    return status;
   }
 }

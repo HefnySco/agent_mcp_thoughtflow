@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
+import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -10,7 +11,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { StorageFactory, StorageConfig } from './storage/StorageFactory.js';
 import { TaskOrchestratorService } from './services/TaskOrchestratorService.js';
-import { ToTService } from './services/ToTService.js';
+import { ToTService, ToTServiceConfig } from './services/ToTService.js';
 import { CognitiveBridgeService } from './services/CognitiveBridgeService.js';
 import { VisualizationService } from './services/VisualizationService.js';
 import { ToolRegistry } from './registry/ToolRegistry.js';
@@ -18,10 +19,45 @@ import { taskToolDefinitions } from './registry/taskToolHandlers.js';
 import { totToolDefinitions } from './registry/totToolHandlers.js';
 import { bridgeToolDefinitions } from './registry/bridgeToolHandlers.js';
 import { logger } from './utils/logger.js';
+import { MockLLMProvider } from './llm-providers/mock-llm-provider.js';
+import { GrokLLMProvider } from './llm-providers/grok-llm-provider.js';
+import { OllamaLLMProvider } from './llm-providers/ollama-llm-provider.js';
 
 // Get the directory of the current module
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/**
+ * Create LLM provider based on environment variables
+ */
+function createLLMProvider(): ToTServiceConfig {
+  const providerType = process.env.LLM_PROVIDER_TYPE || 'mock';
+  const grokApiKey = process.env.GROK_API_KEY;
+  const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+  const ollamaModel = process.env.OLLAMA_MODEL || 'llama2';
+
+  if (providerType === 'null' || providerType === 'none') {
+    logger.info('Using no LLM provider (null)');
+    return { llmProvider: null };
+  }
+
+  if (providerType === 'grok') {
+    if (!grokApiKey) {
+      logger.warn('GROK_API_KEY not set, falling back to MockLLMProvider');
+      return { llmProvider: new MockLLMProvider() };
+    }
+    logger.info('Using GrokLLMProvider');
+    return { llmProvider: new GrokLLMProvider(grokApiKey) };
+  }
+
+  if (providerType === 'ollama') {
+    logger.info(`Using OllamaLLMProvider at ${ollamaBaseUrl} with model ${ollamaModel}`);
+    return { llmProvider: new OllamaLLMProvider(ollamaBaseUrl, ollamaModel) };
+  }
+
+  logger.info('Using MockLLMProvider');
+  return { llmProvider: new MockLLMProvider() };
+}
 
 /**
  * Thoughtflow MCP Server
@@ -36,18 +72,37 @@ class ThoughtflowServer {
   private storageAdapter: any;
   private toolRegistry: ToolRegistry;
 
-  constructor(config?: { storage?: StorageConfig }) {
+  constructor(config?: { storage?: StorageConfig; llmProvider?: ToTServiceConfig }) {
     const storageConfig: StorageConfig = config?.storage || {
       backend: 'json',
       path: path.join(__dirname, '..', 'thoughtflow-state.json')
     };
 
     this.storageAdapter = StorageFactory.create(storageConfig);
-    this.taskService = new TaskOrchestratorService(this.storageAdapter);
-    this.totService = new ToTService(this.storageAdapter);
-    this.bridgeService = new CognitiveBridgeService(this.storageAdapter, this.taskService, this.totService);
-    this.visualizationService = new VisualizationService(this.taskService, this.totService, this.bridgeService);
+    const llmConfig = config?.llmProvider || createLLMProvider();
     this.toolRegistry = new ToolRegistry();
+
+    // Create CognitiveBridgeService first (it will be injected into other services)
+    // Use temporary service instances that will be replaced
+    const tempTaskService = new TaskOrchestratorService(this.storageAdapter);
+    const tempTotService = new ToTService(this.storageAdapter, llmConfig);
+    this.bridgeService = new CognitiveBridgeService(this.storageAdapter, tempTaskService, tempTotService);
+
+    // Now create the actual services with proper bridge injection
+    this.taskService = new TaskOrchestratorService(this.storageAdapter, this.bridgeService);
+    this.taskService.setState(this.bridgeService.getState());
+
+    const llmConfigWithBridge = { ...llmConfig, cognitiveBridgeService: this.bridgeService };
+    this.totService = new ToTService(this.storageAdapter, llmConfigWithBridge);
+    this.totService.setState(this.bridgeService.getState());
+
+    // Update bridge service's internal references to the real services
+    // This is needed because bridge was created with temp services
+    (this.bridgeService as any).taskService = this.taskService;
+    (this.bridgeService as any).totService = this.totService;
+
+    // Create VisualizationService after services are properly initialized
+    this.visualizationService = new VisualizationService(this.taskService, this.totService, this.bridgeService);
 
     // Reduce debounce delay to ensure data persists before shutdown
     this.taskService.setSaveDebounceMs(100);
@@ -92,6 +147,53 @@ class ThoughtflowServer {
       handler: (args: any) => def.handler(args, this.bridgeService)
     })));
 
+    // Register server-level utility tools
+    this.toolRegistry.register(
+      'reload_state',
+      {
+        name: 'reload_state',
+        description: 'Reload state from storage and share it across all services. Useful after manually deleting or editing the state file.',
+        inputSchema: {
+          type: 'object',
+          properties: {}
+        }
+      },
+      async () => {
+        const sharedState = await this.storageAdapter.load();
+        this.taskService.setState(sharedState);
+        this.totService.setState(sharedState);
+        this.bridgeService.setState(sharedState);
+        return { success: true };
+      }
+    );
+
+    this.toolRegistry.register(
+      'clear_state',
+      {
+        name: 'clear_state',
+        description: 'Clear all state from storage and memory. This deletes the state file and resets all services to empty state. Useful for starting fresh without restarting the server.',
+        inputSchema: {
+          type: 'object',
+          properties: {}
+        }
+      },
+      async () => {
+        await this.storageAdapter.clear();
+        const emptyState = {
+          tasks: new Map(),
+          workflows: new Map(),
+          workflowRuns: new Map(),
+          strategies: new Map(),
+          trees: new Map(),
+          cognitiveLinks: new Map()
+        };
+        this.taskService.setState(emptyState);
+        this.totService.setState(emptyState);
+        this.bridgeService.setState(emptyState);
+        return { success: true, message: 'State cleared successfully' };
+      }
+    );
+
     logger.info(`Registered ${this.toolRegistry.size()} tools`);
   }
 
@@ -110,7 +212,9 @@ class ThoughtflowServer {
         // Route to appropriate service based on tool name
         let result: any;
         
-        if (taskToolDefinitions.some(def => def.name === name)) {
+        if (name === 'reload_state' || name === 'clear_state') {
+          result = await this.toolRegistry.execute(name, args, null);
+        } else if (taskToolDefinitions.some(def => def.name === name)) {
           result = await this.toolRegistry.execute(name, args, this.taskService);
         } else if (totToolDefinitions.some(def => def.name === name)) {
           result = await this.toolRegistry.execute(name, args, this.totService);
@@ -186,18 +290,25 @@ class ThoughtflowServer {
 }
 
 // Start the server if this file is run directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const server = new ThoughtflowServer();
-  server.start().catch((error) => {
-    logger.error('Failed to start server', error);
-    process.exit(1);
-  });
+if (process.argv[1]) {
+  try {
+    const realEntryPath = fs.realpathSync(process.argv[1]);
+    if (import.meta.url === pathToFileURL(realEntryPath).href) {
+      const server = new ThoughtflowServer();
+      server.start().catch((error) => {
+        logger.error('Failed to start server', error);
+        process.exit(1);
+      });
 
-  // Handle shutdown gracefully
-  process.on('SIGINT', async () => {
-    await server.shutdown();
-    process.exit(0);
-  });
+      // Handle shutdown gracefully
+      process.on('SIGINT', async () => {
+        await server.shutdown();
+        process.exit(0);
+      });
+    }
+  } catch {
+    // Not run as the main entry point; do nothing
+  }
 }
 
 export { ThoughtflowServer };
