@@ -62,7 +62,14 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+      const content = fs.readFileSync(STATE_FILE, 'utf-8');
+      if (!content || content.trim() === '') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ strategies: [], tasks: [], trees: [], workflows: [], cognitiveLinks: [] }));
+        return;
+      }
+
+      const state = JSON.parse(content);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(state));
     } catch (error) {

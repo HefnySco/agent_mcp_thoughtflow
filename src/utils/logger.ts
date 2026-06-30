@@ -30,19 +30,19 @@ class Logger {
 
   debug(message: string): void {
     if (this.shouldLog(LogLevel.DEBUG)) {
-      console.debug(this.formatMessage(LogLevel.DEBUG, message));
+      console.error(this.formatMessage(LogLevel.DEBUG, message));
     }
   }
 
   info(message: string): void {
     if (this.shouldLog(LogLevel.INFO)) {
-      console.log(this.formatMessage(LogLevel.INFO, message));
+      console.error(this.formatMessage(LogLevel.INFO, message));
     }
   }
 
   warn(message: string): void {
     if (this.shouldLog(LogLevel.WARN)) {
-      console.warn(this.formatMessage(LogLevel.WARN, message));
+      console.error(this.formatMessage(LogLevel.WARN, message));
     }
   }
 

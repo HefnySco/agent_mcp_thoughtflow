@@ -89,6 +89,7 @@ export interface Task {
   completedAt?: string;
   failedAt?: string;
   errorMessage?: string;
+  strategyId?: string;
   metadata?: Record<string, any>;
 }
 
@@ -102,6 +103,7 @@ export interface Workflow {
   updatedAt: string;
   startedAt?: string;
   completedAt?: string;
+  strategyId?: string;
   metadata?: Record<string, any>;
 }
 
@@ -160,6 +162,7 @@ export interface Strategy {
   createdAt: string;
   updatedAt: string;
   metadata?: Record<string, any>;
+  LLM_instruction?: string;
 }
 
 export interface Tree {

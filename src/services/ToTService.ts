@@ -15,6 +15,19 @@ import { BaseService } from './BaseService.js';
 import { logger } from '../utils/logger.js';
 import { validateRequiredString, validateId, validateEvaluationScore } from '../utils/validators.js';
 
+/**
+ * LLM instruction for Strategy usage
+ * Provides guidance to the LLM on how to use Strategies correctly
+ */
+const STRATEGY_LLM_INSTRUCTION = `Strategy Usage Rules:
+- One Strategy = one cohesive goal/project area.
+- Use create_strategy as get-or-create (idempotent by normalized name).
+- Add Trees for divergent reasoning/exploration.
+- Add Workflows for convergent execution with tasks.
+- Promote promising thoughts to tasks. If a task blocks, spawn new Tree from it.
+- Maintain strict isolation: do not mix tasks or workflows across different Strategies.
+- Use Cognitive Bridge for provenance (link/promote/spawn).`;
+
 export interface ToTServiceConfig {
   llmProvider?: LLMProvider | null;
   strictLLM?: boolean;
@@ -507,14 +520,24 @@ export class ToTService extends BaseService {
     if (!strategy) {
       throw new ThoughtflowError(`Strategy '${id}' not found`, 'STRATEGY_NOT_FOUND');
     }
-    return strategy;
+    return this.enrichStrategyWithLLMInstruction(strategy);
   }
 
   /**
    * Get all strategies
    */
   getAllStrategies(): Strategy[] {
-    return Array.from(this.state.strategies.values());
+    return Array.from(this.state.strategies.values()).map(s => this.enrichStrategyWithLLMInstruction(s));
+  }
+
+  /**
+   * Add LLM_instruction to a Strategy object for return to LLM
+   */
+  private enrichStrategyWithLLMInstruction(strategy: Strategy): Strategy {
+    return {
+      ...strategy,
+      LLM_instruction: STRATEGY_LLM_INSTRUCTION
+    };
   }
 
   /**

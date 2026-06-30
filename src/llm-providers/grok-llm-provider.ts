@@ -15,15 +15,18 @@ export class GrokLLMProvider implements LLMProvider {
   private model: string;
   private lastUsageStats: { promptTokens: number; completionTokens: number; totalTokens: number } | null = null;
 
-  constructor(apiKey: string, model: string = 'grok-3') {
+  constructor(apiKey: string, model: string = 'grok-2-1212') {
     this.apiKey = apiKey;
     this.apiUrl = 'https://api.x.ai/v1/chat/completions';
     this.model = model;
   }
 
+  getModel(): string {
+    return this.model;
+  }
+
   async generateThoughts(prompt: string, count: number, context?: string, temperature?: number): Promise<string[]> {
     const systemPrompt = `You are a helpful AI assistant that generates diverse thoughts for problem-solving.
-Generate ${count} distinct thoughts based on the user's prompt and context.
 Each thought should be concise and actionable.`;
 
     const userPrompt = context 
@@ -50,7 +53,9 @@ Each thought should be concise and actionable.`;
       });
 
       if (!response.ok) {
-        throw new Error(`Grok API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Grok API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Grok API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;
@@ -84,7 +89,6 @@ Each thought should be concise and actionable.`;
     fewShotExamples?: string[]
   ): Promise<string[]> {
     let systemPrompt = `You are a helpful AI assistant that generates diverse thoughts for problem-solving.
-Generate ${count} distinct thoughts based on the user's prompt and context.
 Each thought should be concise and actionable.`;
 
     if (fewShotExamples && fewShotExamples.length > 0) {
@@ -118,7 +122,9 @@ Each thought should be concise and actionable.`;
       });
 
       if (!response.ok) {
-        throw new Error(`Grok API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Grok API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Grok API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;
@@ -184,7 +190,9 @@ Ensure all scores are integers between 0 and 100.`;
       });
 
       if (!response.ok) {
-        throw new Error(`Grok API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Grok API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Grok API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;
@@ -261,7 +269,9 @@ Ensure all scores are integers between 0 and 100.`;
       });
 
       if (!response.ok) {
-        throw new Error(`Grok API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Grok API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Grok API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;
@@ -304,7 +314,9 @@ Ensure all scores are integers between 0 and 100.`;
       });
 
       if (!response.ok) {
-        throw new Error(`Grok API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Grok API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Grok API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;
@@ -348,7 +360,9 @@ Ensure all scores are integers between 0 and 100.`;
       });
 
       if (!response.ok) {
-        throw new Error(`Grok API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Grok API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Grok API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;

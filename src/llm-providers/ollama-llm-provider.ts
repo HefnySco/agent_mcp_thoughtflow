@@ -25,35 +25,43 @@ export class OllamaLLMProvider implements LLMProvider {
     this.model = model;
   }
 
+  private buildChatMessages(systemPrompt: string, userPrompt: string): Array<{ role: string; content: string }> {
+    return [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ];
+  }
+
   async generateThoughts(prompt: string, count: number, context?: string, temperature?: number): Promise<string[]> {
     const systemPrompt = `You are a helpful AI assistant that generates diverse thoughts for problem-solving.
-Generate ${count} distinct thoughts based on the user's prompt and context.
-Each thought should be concise and actionable.`;
+Each thought should be concise and actionable.
+Generate exactly ${count} distinct thoughts, each on a separate line.`;
 
     const userPrompt = context 
-      ? `Context: ${context}\n\nPrompt: ${prompt}`
-      : prompt;
+      ? `Context: ${context}\n\nPrompt: ${prompt}\n\nGenerate ${count} distinct thoughts, each on a separate line.`
+      : `Prompt: ${prompt}\n\nGenerate ${count} distinct thoughts, each on a separate line.`;
 
     try {
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           model: this.model,
-          prompt: `${systemPrompt}\n\n${userPrompt}`,
+          messages: this.buildChatMessages(systemPrompt, userPrompt),
           stream: false,
           options: {
             temperature: temperature ?? 0.7,
             num_predict: 500
-          },
-          num_predict: 500
+          }
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Ollama API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Ollama API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;
@@ -67,26 +75,20 @@ Each thought should be concise and actionable.`;
         };
       }
       
-      // Ollama returns a single response, so we need to generate multiple thoughts
-      // We'll make multiple requests or parse the response if it contains multiple thoughts
-      const thoughts: string[] = [];
-      
-      if (count === 1) {
-        thoughts.push(data.response.trim());
-      } else {
-        // For multiple thoughts, we'll split the response by newlines or make multiple calls
-        const lines = data.response.split('\n').filter((line: string) => line.trim().length > 0);
-        
-        if (lines.length >= count) {
-          thoughts.push(...lines.slice(0, count).map((line: string) => line.trim()));
-        } else {
-          // If not enough lines, make additional calls
-          thoughts.push(...lines.map((line: string) => line.trim()));
-          for (let i = thoughts.length; i < count; i++) {
-            const additionalResponse = await this.generateThoughts(prompt, 1, context, temperature);
-            thoughts.push(additionalResponse[0]);
-          }
+      // Parse response - split by newlines for line-separated thoughts
+      const content = data.message?.content || data.response;
+      let thoughts: string[] = content.split('\n')
+        .map((line: string) => line.trim())
+        .filter((line: string) => line.length > 0);
+
+      // Ensure we have the requested number of thoughts
+      if (thoughts.length < count) {
+        for (let i = thoughts.length; i < count; i++) {
+          const additionalResponse = await this.generateThoughts(prompt, 1, context, temperature);
+          thoughts.push(additionalResponse[0]);
         }
+      } else if (thoughts.length > count) {
+        thoughts = thoughts.slice(0, count);
       }
 
       return thoughts;
@@ -104,8 +106,8 @@ Each thought should be concise and actionable.`;
     fewShotExamples?: string[]
   ): Promise<string[]> {
     let systemPrompt = `You are a helpful AI assistant that generates diverse thoughts for problem-solving.
-Generate ${count} distinct thoughts based on the user's prompt and context.
-Each thought should be concise and actionable.`;
+Each thought should be concise and actionable.
+Return your response as a JSON array of strings, where each string is a distinct thought.`;
 
     if (fewShotExamples && fewShotExamples.length > 0) {
       systemPrompt += '\n\nHere are some examples of good thoughts:\n';
@@ -115,29 +117,31 @@ Each thought should be concise and actionable.`;
     }
 
     const userPrompt = context 
-      ? `Context: ${context}\n\nPrompt: ${prompt}`
-      : prompt;
+      ? `Context: ${context}\n\nPrompt: ${prompt}\n\nGenerate ${count} distinct thoughts as a JSON array.`
+      : `Prompt: ${prompt}\n\nGenerate ${count} distinct thoughts as a JSON array.`;
 
     try {
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           model: this.model,
-          prompt: `${systemPrompt}\n\n${userPrompt}`,
+          messages: this.buildChatMessages(systemPrompt, userPrompt),
           stream: false,
           options: {
             temperature: temperature ?? 0.7,
             num_predict: 500
           },
-          num_predict: 500
+          format: 'json'
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Ollama API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Ollama API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;
@@ -150,17 +154,38 @@ Each thought should be concise and actionable.`;
         };
       }
       
-      const thoughts: string[] = [];
-      const lines = data.response.split('\n').filter((line: string) => line.trim().length > 0);
+      const content = data.message?.content || data.response;
+      let thoughts: string[];
       
-      if (lines.length >= count) {
-        thoughts.push(...lines.slice(0, count).map((line: string) => line.trim()));
-      } else {
-        thoughts.push(...lines.map((line: string) => line.trim()));
+      try {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed)) {
+          thoughts = parsed.map((t: any) => {
+            if (typeof t === 'string') {
+              return t;
+            }
+            if (typeof t === 'object' && t !== null) {
+              return t.thought || t.content || t.text || t.message || JSON.stringify(t);
+            }
+            return String(t);
+          }).filter((t: string) => t.trim().length > 0);
+        } else if (typeof parsed === 'object' && parsed !== null) {
+          const singleThought = parsed.thought || parsed.content || parsed.text || parsed.message || JSON.stringify(parsed);
+          thoughts = [singleThought.trim()];
+        } else {
+          thoughts = [String(parsed).trim()];
+        }
+      } catch {
+        thoughts = content.split('\n').filter((line: string) => line.trim().length > 0).map((line: string) => line.trim());
+      }
+
+      if (thoughts.length < count) {
         for (let i = thoughts.length; i < count; i++) {
           const additionalResponse = await this.generateThoughtsAdvanced(prompt, 1, context, temperature, fewShotExamples);
           thoughts.push(additionalResponse[0]);
         }
+      } else if (thoughts.length > count) {
+        thoughts = thoughts.slice(0, count);
       }
 
       return thoughts;
@@ -192,25 +217,27 @@ Ensure all scores are integers between 0 and 100. Respond ONLY with the JSON obj
       : `Goal: "${goal}"\n\nThought to evaluate:\n"${thought}"`;
 
     try {
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           model: this.model,
-          prompt: `${systemPrompt}\n\n${userPrompt}`,
+          messages: this.buildChatMessages(systemPrompt, userPrompt),
           stream: false,
           options: {
             temperature: 0.3,
             num_predict: 500
           },
-          num_predict: 500
+          format: 'json'
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Ollama API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Ollama API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;
@@ -223,15 +250,9 @@ Ensure all scores are integers between 0 and 100. Respond ONLY with the JSON obj
         };
       }
 
-      // Parse JSON from the response (may have extra text)
-      const content = data.response.trim();
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      
-      if (!jsonMatch) {
-        throw new Error('Failed to extract JSON from Ollama response');
-      }
-
-      const result = JSON.parse(jsonMatch[0]) as StructuredEvaluationResult;
+      // Parse JSON from response (using native JSON mode)
+      const content = data.message?.content || data.response;
+      const result = JSON.parse(content) as StructuredEvaluationResult;
 
       // Validate and normalize scores
       result.overallScore = Math.min(100, Math.max(0, Math.round(result.overallScore)));
@@ -275,25 +296,26 @@ Ensure all scores are integers between 0 and 100. Respond ONLY with the JSON obj
     const userPrompt = `Original thought: "${thought}"\n\nFeedback: ${feedback}\n\nProvide an improved version of the thought based on the feedback.`;
 
     try {
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           model: this.model,
-          prompt: `${systemPrompt}\n\n${userPrompt}`,
+          messages: this.buildChatMessages(systemPrompt, userPrompt),
           stream: false,
           options: {
             temperature: 0.7,
             num_predict: 300
-          },
-          num_predict: 300
+          }
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Ollama API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Ollama API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;
@@ -306,7 +328,7 @@ Ensure all scores are integers between 0 and 100. Respond ONLY with the JSON obj
         };
       }
 
-      return data.response.trim();
+      return (data.message?.content || data.response).trim();
     } catch (error) {
       console.error('Error calling Ollama API for self-reflection:', error);
       throw error;
@@ -318,25 +340,26 @@ Ensure all scores are integers between 0 and 100. Respond ONLY with the JSON obj
     const userPrompt = `Goal: "${goal}"\n\nOriginal thought: "${thought}"\n\nProvide a refined version of the thought that better aligns with the goal.`;
 
     try {
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           model: this.model,
-          prompt: `${systemPrompt}\n\n${userPrompt}`,
+          messages: this.buildChatMessages(systemPrompt, userPrompt),
           stream: false,
           options: {
             temperature: 0.6,
             num_predict: 300
-          },
-          num_predict: 300
+          }
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Ollama API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Ollama API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;
@@ -349,7 +372,7 @@ Ensure all scores are integers between 0 and 100. Respond ONLY with the JSON obj
         };
       }
 
-      return data.response.trim();
+      return (data.message?.content || data.response).trim();
     } catch (error) {
       console.error('Error calling Ollama API for thought refinement:', error);
       throw error;
@@ -362,25 +385,26 @@ Ensure all scores are integers between 0 and 100. Respond ONLY with the JSON obj
     const userPrompt = `Goal: "${goal}"\n\nThoughts to synthesize:\n${thoughtsList}\n\nProvide a single synthesized thought that combines the best aspects of all the given thoughts.`;
 
     try {
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
+      const response = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           model: this.model,
-          prompt: `${systemPrompt}\n\n${userPrompt}`,
+          messages: this.buildChatMessages(systemPrompt, userPrompt),
           stream: false,
           options: {
             temperature: 0.5,
             num_predict: 400
-          },
-          num_predict: 400
+          }
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+        const errorBody = await response.text();
+        console.error(`Ollama API error: ${response.status} ${response.statusText}`, errorBody);
+        throw new Error(`Ollama API error: ${response.status} ${response.statusText} - ${errorBody}`);
       }
 
       const data = await response.json() as any;
@@ -393,7 +417,7 @@ Ensure all scores are integers between 0 and 100. Respond ONLY with the JSON obj
         };
       }
 
-      return data.response.trim();
+      return (data.message?.content || data.response).trim();
     } catch (error) {
       console.error('Error calling Ollama API for thought synthesis:', error);
       throw error;

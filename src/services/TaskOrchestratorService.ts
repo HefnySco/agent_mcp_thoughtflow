@@ -14,6 +14,19 @@ import { logger } from '../utils/logger.js';
 import { validateRequiredString, validateId } from '../utils/validators.js';
 
 /**
+ * LLM instruction for Strategy usage
+ * Provides guidance to the LLM on how to use Strategies correctly
+ */
+const STRATEGY_LLM_INSTRUCTION = `Strategy Usage Rules:
+- One Strategy = one cohesive goal/project area.
+- Use create_strategy as get-or-create (idempotent by normalized name).
+- Add Trees for divergent reasoning/exploration.
+- Add Workflows for convergent execution with tasks.
+- Promote promising thoughts to tasks. If a task blocks, spawn new Tree from it.
+- Maintain strict isolation: do not mix tasks or workflows across different Strategies.
+- Use Cognitive Bridge for provenance (link/promote/spawn).`;
+
+/**
  * TaskOrchestratorService manages task execution with dependency tracking
  */
 export class TaskOrchestratorService extends BaseService {
@@ -31,6 +44,7 @@ export class TaskOrchestratorService extends BaseService {
     parentTaskId?: string;
     order?: number;
     status?: Task['status'];
+    strategyId?: string;
     metadata?: Record<string, any>;
   }): Task {
     validateRequiredString(task.name, 'name');
@@ -64,6 +78,7 @@ export class TaskOrchestratorService extends BaseService {
       status: task.status || 'pending',
       createdAt: now,
       updatedAt: now,
+      strategyId: task.strategyId,
       metadata: task.metadata
     };
     
@@ -135,7 +150,17 @@ export class TaskOrchestratorService extends BaseService {
       task.dependencies = updates.dependencies;
     }
     if (updates.metadata !== undefined) {
-      task.metadata = updates.metadata;
+      // Preserve cognitive metadata when updating
+      if (task.metadata?.cognitive && updates.metadata?.cognitive) {
+        // Merge cognitive metadata, preserving existing fields
+        const existingCognitive = task.metadata.cognitive;
+        task.metadata = { ...updates.metadata, cognitive: { ...existingCognitive, ...updates.metadata.cognitive } };
+      } else if (task.metadata?.cognitive && !updates.metadata?.cognitive) {
+        // Keep existing cognitive metadata
+        task.metadata = { ...updates.metadata, cognitive: task.metadata.cognitive };
+      } else {
+        task.metadata = updates.metadata;
+      }
     }
     
     task.updatedAt = now;
@@ -165,6 +190,7 @@ export class TaskOrchestratorService extends BaseService {
     name: string;
     description?: string;
     taskIds: string[];
+    strategyId?: string;
     metadata?: Record<string, any>;
   }): Workflow {
     validateRequiredString(workflow.name, 'name');
@@ -187,6 +213,7 @@ export class TaskOrchestratorService extends BaseService {
       status: 'pending',
       createdAt: now,
       updatedAt: now,
+      strategyId: workflow.strategyId,
       metadata: workflow.metadata
     };
     
@@ -254,6 +281,19 @@ export class TaskOrchestratorService extends BaseService {
       throw new WorkflowNotFoundError(workflowId);
     }
     
+    // Strategy isolation guardrail
+    if (workflow.strategyId) {
+      for (const taskId of taskIds) {
+        const task = this.state.tasks.get(taskId);
+        if (task && task.strategyId && task.strategyId !== workflow.strategyId) {
+          throw new ThoughtflowError(
+            `Cannot add task '${taskId}' from strategy '${task.strategyId}' to workflow '${workflowId}' belonging to strategy '${workflow.strategyId}'. Cross-strategy task sharing is not allowed.`,
+            'CROSS_STRATEGY_ISOLATION_VIOLATION'
+          );
+        }
+      }
+    }
+    
     // Add task IDs, avoiding duplicates
     for (const taskId of taskIds) {
       if (!workflow.taskIds.includes(taskId)) {
@@ -268,7 +308,17 @@ export class TaskOrchestratorService extends BaseService {
   }
 
   /**
-   * Create a strategy
+   * Add LLM_instruction to a Strategy object for return to LLM
+   */
+  private enrichStrategyWithLLMInstruction(strategy: Strategy): Strategy {
+    return {
+      ...strategy,
+      LLM_instruction: STRATEGY_LLM_INSTRUCTION
+    };
+  }
+
+  /**
+   * Create a strategy (idempotent get-or-create by normalized name)
    */
   createStrategy(strategy: {
     name: string;
@@ -283,8 +333,12 @@ export class TaskOrchestratorService extends BaseService {
     // Check if strategy with same normalized name already exists
     for (const [id, existingStrategy] of this.state.strategies) {
       if (this.normalizeKey(existingStrategy.name) === normalizedName) {
-        logger.info(`Returning existing strategy: ${id} - ${existingStrategy.name} (normalized: ${normalizedName})`);
-        return existingStrategy;
+        // Update timestamp to reflect access
+        existingStrategy.updatedAt = new Date().toISOString();
+        this.state.strategies.set(id, existingStrategy);
+        this.triggerSave();
+        logger.info(`Returning existing strategy (get-or-create): ${id} - ${existingStrategy.name} (normalized: ${normalizedName})`);
+        return this.enrichStrategyWithLLMInstruction(existingStrategy);
       }
     }
 
@@ -306,9 +360,9 @@ export class TaskOrchestratorService extends BaseService {
 
     this.state.strategies.set(id, newStrategy);
     this.triggerSave();
-    logger.info(`Created strategy: ${id} - ${strategy.name} (normalized: ${normalizedName})`);
-    // Return minimal summary
-    return { id, name: newStrategy.name, status: newStrategy.status } as Strategy;
+    logger.info(`Created new strategy: ${id} - ${strategy.name} (normalized: ${normalizedName})`);
+    // Return minimal summary with LLM_instruction
+    return this.enrichStrategyWithLLMInstruction({ id, name: newStrategy.name, status: newStrategy.status } as Strategy);
   }
 
   /**
@@ -320,20 +374,21 @@ export class TaskOrchestratorService extends BaseService {
     if (!strategy) {
       throw new ThoughtflowError(`Strategy '${id}' not found`, 'STRATEGY_NOT_FOUND');
     }
-    return strategy;
+    return this.enrichStrategyWithLLMInstruction(strategy);
   }
 
   /**
    * Get all strategies
    */
   getAllStrategies(): Strategy[] {
-    return Array.from(this.state.strategies.values());
+    return Array.from(this.state.strategies.values()).map(s => this.enrichStrategyWithLLMInstruction(s));
   }
 
   /**
    * Deduplicate strategies by normalized name.
    * Keeps the first occurrence of each unique normalized name and removes duplicates.
    * Returns the number of duplicates removed.
+   * Also cleans up orphaned workflow/tree references from deleted strategies.
    */
   deduplicateStrategies(): number {
     const seen = new Map<string, string>(); // normalized name -> strategy id
@@ -349,8 +404,27 @@ export class TaskOrchestratorService extends BaseService {
       }
     }
 
-    // Delete duplicates
+    // Delete duplicates and clean up references
     for (const id of toDelete) {
+      const strategy = this.state.strategies.get(id);
+      if (strategy) {
+        // Clear strategyId from linked workflows
+        for (const workflowId of strategy.workflowIds) {
+          const workflow = this.state.workflows.get(workflowId);
+          if (workflow) {
+            workflow.strategyId = undefined;
+            this.state.workflows.set(workflowId, workflow);
+          }
+        }
+        // Clear strategyId from linked trees
+        for (const treeId of strategy.treeIds) {
+          const tree = this.state.trees.get(treeId);
+          if (tree) {
+            tree.strategyId = undefined;
+            this.state.trees.set(treeId, tree);
+          }
+        }
+      }
       this.state.strategies.delete(id);
     }
 
@@ -370,6 +444,22 @@ export class TaskOrchestratorService extends BaseService {
     validateId(treeId, 'Tree');
     
     const strategy = this.getStrategy(strategyId);
+    const tree = this.state.trees.get(treeId);
+    
+    if (!tree) {
+      throw new ThoughtflowError(`Tree '${treeId}' not found`, 'TREE_NOT_FOUND');
+    }
+    
+    // Propagate strategyId to tree
+    if (tree.strategyId && tree.strategyId !== strategyId) {
+      throw new ThoughtflowError(
+        `Tree '${treeId}' already belongs to strategy '${tree.strategyId}'. Cannot add to different strategy '${strategyId}'.`,
+        'TREE_ALREADY_OWNED'
+      );
+    }
+    
+    tree.strategyId = strategyId;
+    this.state.trees.set(treeId, tree);
     
     if (!strategy.treeIds.includes(treeId)) {
       strategy.treeIds.push(treeId);
@@ -377,9 +467,9 @@ export class TaskOrchestratorService extends BaseService {
       this.triggerSave();
       logger.info(`Added tree ${treeId} to strategy ${strategyId}`);
     }
-    
-    // Return minimal summary
-    return { id: strategyId, name: strategy.name, status: strategy.status } as Strategy;
+
+    // Return minimal summary with LLM_instruction
+    return this.enrichStrategyWithLLMInstruction({ id: strategyId, name: strategy.name, status: strategy.status } as Strategy);
   }
 
   /**
@@ -390,17 +480,25 @@ export class TaskOrchestratorService extends BaseService {
     validateId(treeId, 'Tree');
     
     const strategy = this.getStrategy(strategyId);
+    const tree = this.state.trees.get(treeId);
+    
+    if (tree) {
+      // Clear strategyId from tree (unlink only, do not delete)
+      tree.strategyId = undefined;
+      this.state.trees.set(treeId, tree);
+    }
+    
     const index = strategy.treeIds.indexOf(treeId);
     
     if (index > -1) {
       strategy.treeIds.splice(index, 1);
       strategy.updatedAt = new Date().toISOString();
       this.triggerSave();
-      logger.info(`Removed tree ${treeId} from strategy ${strategyId}`);
+      logger.info(`Removed tree ${treeId} from strategy ${strategyId} (unlinked, not deleted)`);
     }
-    
-    // Return minimal summary
-    return { id: strategyId, name: strategy.name, status: strategy.status } as Strategy;
+
+    // Return minimal summary with LLM_instruction
+    return this.enrichStrategyWithLLMInstruction({ id: strategyId, name: strategy.name, status: strategy.status } as Strategy);
   }
 
   /**
@@ -411,6 +509,37 @@ export class TaskOrchestratorService extends BaseService {
     validateId(workflowId, 'Workflow');
     
     const strategy = this.getStrategy(strategyId);
+    const workflow = this.state.workflows.get(workflowId);
+    
+    if (!workflow) {
+      throw new WorkflowNotFoundError(workflowId);
+    }
+    
+    // Propagate strategyId to workflow
+    if (workflow.strategyId && workflow.strategyId !== strategyId) {
+      throw new ThoughtflowError(
+        `Workflow '${workflowId}' already belongs to strategy '${workflow.strategyId}'. Cannot add to different strategy '${strategyId}'.`,
+        'WORKFLOW_ALREADY_OWNED'
+      );
+    }
+    
+    workflow.strategyId = strategyId;
+    this.state.workflows.set(workflowId, workflow);
+    
+    // Propagate strategyId to all tasks in the workflow
+    for (const taskId of workflow.taskIds) {
+      const task = this.state.tasks.get(taskId);
+      if (task) {
+        if (task.strategyId && task.strategyId !== strategyId) {
+          throw new ThoughtflowError(
+            `Task '${taskId}' already belongs to strategy '${task.strategyId}'. Cannot reassign to strategy '${strategyId}' via workflow '${workflowId}'.`,
+            'TASK_ALREADY_OWNED'
+          );
+        }
+        task.strategyId = strategyId;
+        this.state.tasks.set(taskId, task);
+      }
+    }
     
     if (!strategy.workflowIds.includes(workflowId)) {
       strategy.workflowIds.push(workflowId);
@@ -418,9 +547,9 @@ export class TaskOrchestratorService extends BaseService {
       this.triggerSave();
       logger.info(`Added workflow ${workflowId} to strategy ${strategyId}`);
     }
-    
-    // Return minimal summary to reduce returned tokens
-    return { id: strategyId, name: strategy.name, status: strategy.status } as Strategy;
+
+    // Return minimal summary with LLM_instruction
+    return this.enrichStrategyWithLLMInstruction({ id: strategyId, name: strategy.name, status: strategy.status } as Strategy);
   }
 
   /**
@@ -431,17 +560,34 @@ export class TaskOrchestratorService extends BaseService {
     validateId(workflowId, 'Workflow');
     
     const strategy = this.getStrategy(strategyId);
+    const workflow = this.state.workflows.get(workflowId);
+    
+    if (workflow) {
+      // Clear strategyId from workflow (unlink only, do not delete)
+      workflow.strategyId = undefined;
+      this.state.workflows.set(workflowId, workflow);
+      
+      // Also clear strategyId from tasks in the workflow (optional, but keeps consistency)
+      for (const taskId of workflow.taskIds) {
+        const task = this.state.tasks.get(taskId);
+        if (task) {
+          task.strategyId = undefined;
+          this.state.tasks.set(taskId, task);
+        }
+      }
+    }
+    
     const index = strategy.workflowIds.indexOf(workflowId);
     
     if (index > -1) {
       strategy.workflowIds.splice(index, 1);
       strategy.updatedAt = new Date().toISOString();
       this.triggerSave();
-      logger.info(`Removed workflow ${workflowId} from strategy ${strategyId}`);
+      logger.info(`Removed workflow ${workflowId} from strategy ${strategyId} (unlinked, not deleted)`);
     }
-    
-    // Return minimal summary
-    return { id: strategyId, name: strategy.name, status: strategy.status } as Strategy;
+
+    // Return minimal summary with LLM_instruction
+    return this.enrichStrategyWithLLMInstruction({ id: strategyId, name: strategy.name, status: strategy.status } as Strategy);
   }
 
   /**
@@ -680,6 +826,9 @@ export class TaskOrchestratorService extends BaseService {
       }
     }
 
+    // Preserve cognitive metadata during move
+    const preservedCognitive = task.metadata?.cognitive;
+
     // Update task
     const updatedTask: Task = {
       ...task,
@@ -687,12 +836,16 @@ export class TaskOrchestratorService extends BaseService {
         ? (options.newParentTaskId || undefined) 
         : task.parentTaskId,
       order: options.order !== undefined ? options.order : task.order,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      metadata: {
+        ...task.metadata,
+        cognitive: preservedCognitive
+      }
     };
 
     this.state.tasks.set(taskId, updatedTask);
     this.triggerSave();
-    logger.info(`Moved task: ${taskId}`);
+    logger.info(`Moved task: ${taskId} (cognitive metadata preserved)`);
     
     // Return minimal summary
     return { id: taskId, name: updatedTask.name, status: updatedTask.status } as Task;

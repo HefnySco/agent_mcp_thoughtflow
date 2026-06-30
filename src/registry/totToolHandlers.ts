@@ -221,5 +221,35 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
       }
     },
     handler: (_args: any, service: any) => Promise.resolve({ removed: service.deduplicateTrees() })
+  },
+  {
+    name: 'generate_children_with_llm',
+    tool: {
+      name: 'generate_children_with_llm',
+      description: 'Generate child thoughts using the configured LLM provider (Grok, Ollama, etc.). This triggers actual API calls to the LLM service.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          treeId: { type: 'string', description: 'Tree ID' },
+          parentId: { type: 'string', description: 'Parent thought ID to generate children for' },
+          numChildren: { type: 'number', description: 'Number of child thoughts to generate (default: 3)' },
+          temperature: { type: 'number', description: 'Temperature for LLM generation (default: 0.7)' }
+        },
+        required: ['treeId', 'parentId']
+      }
+    },
+    handler: async (args: any, service: any) => {
+      const thoughts = await service.generateChildrenWithLLM(args);
+      return {
+        thoughts: thoughts.map((t: any) => ({
+          id: t.id,
+          content: t.content,
+          state: t.state,
+          depth: t.depth,
+          metadata: t.metadata
+        })),
+        count: thoughts.length
+      };
+    }
   }
 ];

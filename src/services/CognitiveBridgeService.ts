@@ -39,6 +39,16 @@ export class CognitiveBridgeService extends BaseService {
   }
 
   /**
+   * Helper method to add a unique ID to an array, preventing duplicates
+   * Centralizes duplicate prevention logic for all ID tracking arrays
+   */
+  private addUniqueIdToArray(array: string[], id: string): void {
+    if (!array.includes(id)) {
+      array.push(id);
+    }
+  }
+
+  /**
    * Promote a thought (or subtree) to executable tasks
    * This is the primary bridge tool for converting reasoning into action
    */
@@ -104,13 +114,24 @@ export class CognitiveBridgeService extends BaseService {
       
       taskIds.push(newTask.id);
       
-      // Update thought metadata
+      // Update thought metadata with bidirectional tracking
+      this.preserveCognitiveMetadata(thoughtToPromote);
       thoughtToPromote.metadata = thoughtToPromote.metadata || {};
       thoughtToPromote.metadata.cognitive = thoughtToPromote.metadata.cognitive || {};
-      (thoughtToPromote.metadata.cognitive as CognitiveMetadata).promotedToTaskIds = 
-        (thoughtToPromote.metadata.cognitive as CognitiveMetadata).promotedToTaskIds || [];
-      (thoughtToPromote.metadata.cognitive as CognitiveMetadata).promotedToTaskIds!.push(newTask.id);
-      (thoughtToPromote.metadata.cognitive as CognitiveMetadata).promotedAt = now;
+      const thoughtCognitive = thoughtToPromote.metadata.cognitive as CognitiveMetadata;
+      thoughtCognitive.promotedToTaskIds = thoughtCognitive.promotedToTaskIds || [];
+      this.addUniqueIdToArray(thoughtCognitive.promotedToTaskIds, newTask.id);
+      thoughtCognitive.promotedAt = now;
+      
+      // Add provenance entry
+      thoughtCognitive.provenanceChain = thoughtCognitive.provenanceChain || [];
+      thoughtCognitive.provenanceChain.push({
+        type: 'thought_to_task',
+        fromId: thoughtToPromote.id,
+        toId: newTask.id,
+        timestamp: now,
+        reason: 'Promoted thought to task'
+      });
       
       // Create cognitive link
       this.createCognitiveLink({
@@ -178,13 +199,24 @@ export class CognitiveBridgeService extends BaseService {
       }
     });
     
-    // Update task metadata
+    // Update task metadata with bidirectional tracking
+    this.preserveCognitiveMetadata(task);
     task.metadata = task.metadata || {};
     task.metadata.cognitive = task.metadata.cognitive || {};
-    (task.metadata.cognitive as CognitiveMetadata).explorationTreeIds = 
-      (task.metadata.cognitive as CognitiveMetadata).explorationTreeIds || [];
-    (task.metadata.cognitive as CognitiveMetadata).explorationTreeIds!.push(tree.id);
-    (task.metadata.cognitive as CognitiveMetadata).spawnedAt = now;
+    const taskCognitive = task.metadata.cognitive as CognitiveMetadata;
+    taskCognitive.explorationTreeIds = taskCognitive.explorationTreeIds || [];
+    this.addUniqueIdToArray(taskCognitive.explorationTreeIds, tree.id);
+    taskCognitive.spawnedAt = now;
+    
+    // Add provenance entry
+    taskCognitive.provenanceChain = taskCognitive.provenanceChain || [];
+    taskCognitive.provenanceChain.push({
+      type: 'task_to_thought',
+      fromId: params.taskId,
+      toId: tree.id,
+      timestamp: now,
+      reason: 'Spawned ToT tree from task'
+    });
     
     // Create cognitive link
     this.createCognitiveLink({
@@ -233,27 +265,21 @@ export class CognitiveBridgeService extends BaseService {
     
     const now = new Date().toISOString();
     
-    // Update thought metadata with bidirectional link
+    // Update thought metadata with bidirectional link (preserve existing cognitive fields)
+    this.preserveCognitiveMetadata(thought);
     thought.metadata = thought.metadata || {};
     thought.metadata.cognitive = thought.metadata.cognitive || {};
     const thoughtCognitive = thought.metadata.cognitive as CognitiveMetadata;
     thoughtCognitive.linkedTaskIds = thoughtCognitive.linkedTaskIds || [];
+    this.addUniqueIdToArray(thoughtCognitive.linkedTaskIds, params.taskId);
     
-    // Prevent duplicate links
-    if (!thoughtCognitive.linkedTaskIds.includes(params.taskId)) {
-      thoughtCognitive.linkedTaskIds.push(params.taskId);
-    }
-    
-    // Update task metadata with bidirectional link
+    // Update task metadata with bidirectional link (preserve existing cognitive fields)
+    this.preserveCognitiveMetadata(task);
     task.metadata = task.metadata || {};
     task.metadata.cognitive = task.metadata.cognitive || {};
     const taskCognitive = task.metadata.cognitive as CognitiveMetadata;
     taskCognitive.linkedThoughtIds = taskCognitive.linkedThoughtIds || [];
-    
-    // Prevent duplicate links
-    if (!taskCognitive.linkedThoughtIds.includes(params.thoughtId)) {
-      taskCognitive.linkedThoughtIds.push(params.thoughtId);
-    }
+    this.addUniqueIdToArray(taskCognitive.linkedThoughtIds, params.thoughtId);
     
     // Update sync status
     thoughtCognitive.syncStatus = 'synced';
@@ -307,7 +333,7 @@ export class CognitiveBridgeService extends BaseService {
 
   /**
    * Get cognitive provenance for a thought or task
-   * Traces the full reasoning → execution chain
+   * Traces the full reasoning → execution chain including promotion/spawn events
    */
   getCognitiveProvenance(id: string, type: 'thought' | 'task', maxDepth: number = 5): any {
     validateId(id, type === 'thought' ? 'Thought' : 'Task');
@@ -318,7 +344,8 @@ export class CognitiveBridgeService extends BaseService {
       type,
       data: null,
       cognitiveMetadata: null,
-      relatedEntries: []
+      relatedEntries: [],
+      provenanceChain: []
     };
     
     if (type === 'thought') {
@@ -326,13 +353,21 @@ export class CognitiveBridgeService extends BaseService {
       if (tree) {
         result.data = tree.thoughts.get(id);
         result.cognitiveMetadata = result.data?.metadata?.cognitive;
+        // Include provenance chain from metadata
+        if (result.cognitiveMetadata?.provenanceChain) {
+          result.provenanceChain = result.cognitiveMetadata.provenanceChain;
+        }
       }
     } else {
       result.data = this.taskService.getTask(id);
       result.cognitiveMetadata = result.data?.metadata?.cognitive;
+      // Include provenance chain from metadata
+      if (result.cognitiveMetadata?.provenanceChain) {
+        result.provenanceChain = result.cognitiveMetadata.provenanceChain;
+      }
     }
     
-    // Traverse related entries
+    // Traverse related entries via cognitiveLinks
     this.traverseCognitiveLinks(id, type, visited, result.relatedEntries, 0, maxDepth);
     
     return result;
@@ -353,6 +388,21 @@ export class CognitiveBridgeService extends BaseService {
   }
 
   /**
+   * Preserve existing cognitive metadata when updating entity metadata
+   * Ensures bidirectional sync doesn't overwrite existing cognitive fields
+   */
+  private preserveCognitiveMetadata(entity: any): void {
+    if (!entity.metadata) {
+      entity.metadata = {};
+    }
+    if (!entity.metadata.cognitive) {
+      entity.metadata.cognitive = {};
+    }
+    // Preserve all existing cognitive fields - this is a no-op placeholder
+    // The actual preservation happens by not reassigning the entire cognitive object
+  }
+
+  /**
    * Create a cognitive link
    */
   private createCognitiveLink(link: Omit<CognitiveLink, 'id'>): void {
@@ -362,6 +412,8 @@ export class CognitiveBridgeService extends BaseService {
 
   /**
    * Traverse cognitive links to build provenance chain
+   * Handles complex networks (one-to-many, many-to-one, chains, branches)
+   * Prevents circular reference issues using visited set
    */
   private traverseCognitiveLinks(
     currentId: string,
@@ -377,7 +429,7 @@ export class CognitiveBridgeService extends BaseService {
     
     visited.add(currentId);
     
-    // Find all links from this entity
+    // Find all links from this entity (supports one-to-many)
     for (const link of this.state.cognitiveLinks.values()) {
       if (link.fromId === currentId && link.fromType === currentType) {
         const relatedData = link.toType === 'thought' 
@@ -394,7 +446,32 @@ export class CognitiveBridgeService extends BaseService {
             createdAt: link.createdAt
           });
           
+          // Recursively traverse (supports chains and branches)
           this.traverseCognitiveLinks(link.toId, link.toType, visited, results, depth + 1, maxDepth);
+        }
+      }
+    }
+    
+    // Also find reverse links (supports many-to-one)
+    for (const link of this.state.cognitiveLinks.values()) {
+      if (link.toId === currentId && link.toType === currentType) {
+        const relatedData = link.fromType === 'thought' 
+          ? this.getThoughtData(link.fromId)
+          : this.taskService.getTask(link.fromId);
+        
+        if (relatedData && !visited.has(link.fromId)) {
+          results.push({
+            id: link.fromId,
+            type: link.fromType,
+            data: relatedData,
+            linkType: link.type,
+            reason: link.reason,
+            createdAt: link.createdAt,
+            reverse: true
+          });
+          
+          // Recursively traverse reverse links
+          this.traverseCognitiveLinks(link.fromId, link.fromType, visited, results, depth + 1, maxDepth);
         }
       }
     }
@@ -416,6 +493,34 @@ export class CognitiveBridgeService extends BaseService {
    */
   getCognitiveLinkCount(): number {
     return this.state.cognitiveLinks.size;
+  }
+
+  /**
+   * Ensure cognitive hierarchy for an entity
+   * Initializes cognitive metadata structure for trees and thoughts
+   */
+  ensureCognitiveHierarchy(entity: any, entityType: 'tree' | 'thought', _context?: string): void {
+    if (entityType === 'tree') {
+      // Ensure tree metadata has cognitive structure
+      entity.metadata = entity.metadata || {};
+      entity.metadata.cognitive = entity.metadata.cognitive || {};
+      
+      // If tree has sourceTaskId, ensure it's properly tracked
+      if (entity.metadata.sourceTaskId) {
+        const task = this.taskService.getTask(entity.metadata.sourceTaskId);
+        if (task) {
+          task.metadata = task.metadata || {};
+          task.metadata.cognitive = task.metadata.cognitive || {};
+          const taskCognitive = task.metadata.cognitive as CognitiveMetadata;
+          taskCognitive.explorationTreeIds = taskCognitive.explorationTreeIds || [];
+          this.addUniqueIdToArray(taskCognitive.explorationTreeIds, entity.id);
+        }
+      }
+    } else if (entityType === 'thought') {
+      // Ensure thought metadata has cognitive structure
+      entity.metadata = entity.metadata || {};
+      entity.metadata.cognitive = entity.metadata.cognitive || {};
+    }
   }
 
   /**

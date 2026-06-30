@@ -86,40 +86,37 @@
       </div>
     </div>
 
-    <!-- Main Content Grid -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-      <!-- Strategies Panel -->
-      <div class="card rounded-lg p-6">
-        <h2 class="text-xl font-bold text-white mb-4">Strategies</h2>
-        <div id="strategies-list" class="space-y-3">
-          <p class="text-gray-500 text-sm">Loading strategies...</p>
+    <!-- Strategies Panel (Full Width) -->
+    <div class="card rounded-lg p-6 mb-8">
+      <h2 class="text-xl font-bold text-white mb-4">Strategies</h2>
+      <div id="strategies-list" class="space-y-3">
+        <p class="text-gray-500 text-sm">Loading strategies...</p>
+      </div>
+    </div>
+
+    <!-- Tasks Panel (Full Width) -->
+    <div class="card rounded-lg p-6 mb-8">
+      <h2 class="text-xl font-bold text-white mb-4">Tasks</h2>
+      <div class="grid grid-cols-4 gap-4 mb-4">
+        <div class="text-center">
+          <p class="text-2xl font-bold status-pending" id="tasks-pending">0</p>
+          <p class="text-xs text-gray-400">Pending</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold status-in_progress" id="tasks-in_progress">0</p>
+          <p class="text-xs text-gray-400">In Progress</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold status-completed" id="tasks-completed">0</p>
+          <p class="text-xs text-gray-400">Completed</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold status-failed" id="tasks-failed">0</p>
+          <p class="text-xs text-gray-400">Failed</p>
         </div>
       </div>
-
-      <!-- Tasks Panel -->
-      <div class="card rounded-lg p-6">
-        <h2 class="text-xl font-bold text-white mb-4">Tasks</h2>
-        <div class="grid grid-cols-4 gap-4 mb-4">
-          <div class="text-center">
-            <p class="text-2xl font-bold status-pending" id="tasks-pending">0</p>
-            <p class="text-xs text-gray-400">Pending</p>
-          </div>
-          <div class="text-center">
-            <p class="text-2xl font-bold status-in_progress" id="tasks-in_progress">0</p>
-            <p class="text-xs text-gray-400">In Progress</p>
-          </div>
-          <div class="text-center">
-            <p class="text-2xl font-bold status-completed" id="tasks-completed">0</p>
-            <p class="text-xs text-gray-400">Completed</p>
-          </div>
-          <div class="text-center">
-            <p class="text-2xl font-bold status-failed" id="tasks-failed">0</p>
-            <p class="text-xs text-gray-400">Failed</p>
-          </div>
-        </div>
-        <div id="tasks-list" class="space-y-2 max-h-64 overflow-y-auto">
-          <p class="text-gray-500 text-sm">Loading tasks...</p>
-        </div>
+      <div id="tasks-list" class="space-y-2 max-h-64 overflow-y-auto">
+        <p class="text-gray-500 text-sm">Loading tasks...</p>
       </div>
     </div>
 
@@ -129,19 +126,6 @@
       <div id="trees-list" class="space-y-3">
         <p class="text-gray-500 text-sm">Loading trees...</p>
       </div>
-    </div>
-
-    <!-- Tree Visualization Panel -->
-    <div id="tree-visualization-panel" class="card rounded-lg p-6 mb-8 hidden">
-      <div class="flex justify-between items-center mb-4">
-        <h2 class="text-xl font-bold text-white">Tree Visualization</h2>
-        <button onclick="closeTreeVisualization()" class="text-gray-400 hover:text-white">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-          </svg>
-        </button>
-      </div>
-      <pre id="tree-visualization-content" class="bg-gray-900 rounded p-4 text-sm text-gray-300 overflow-x-auto font-mono"></pre>
     </div>
 
     <!-- Workflows Panel -->
@@ -155,7 +139,7 @@
     <!-- Cognitive Links Panel -->
     <div class="card rounded-lg p-6 mb-8">
       <h2 class="text-xl font-bold text-white mb-4">Cognitive Links & Provenance</h2>
-      <div id="links-list" class="space-y-3">
+      <div id="links-list" class="space-y-3 max-h-96 overflow-y-auto">
         <p class="text-gray-500 text-sm">Loading cognitive links...</p>
       </div>
     </div>
@@ -178,6 +162,9 @@
     let lastModified = null;
     let autoRefreshInterval = null;
     let isAutoRefresh = true;
+    let selectedStrategyId = null;
+    let expandedThoughts = new Set();
+    let expandedWorkflows = new Set();
 
     async function fetchStateInfo() {
       try {
@@ -259,94 +246,442 @@
       document.getElementById('tasks-completed').textContent = completed;
       document.getElementById('tasks-failed').textContent = failed;
 
-      // Update strategies list
+      // Update strategies list (clickable rows)
       const strategiesList = document.getElementById('strategies-list');
       if (state.strategies?.length > 0) {
-        strategiesList.innerHTML = state.strategies.map(s => `
-          <div class="bg-gray-800 rounded p-3">
-            <h4 class="font-medium text-white">${escapeHtml(s.name)}</h4>
-            <p class="text-xs text-gray-400 mt-1">${s.description || 'No description'}</p>
-            <div class="flex gap-4 mt-2 text-xs">
-              <span class="text-blue-400">Trees: ${s.treeIds?.length || 0}</span>
-              <span class="text-green-400">Workflows: ${s.workflowIds?.length || 0}</span>
-            </div>
-          </div>
-        `).join('');
+        strategiesList.innerHTML = `
+          <table class="w-full">
+            <thead>
+              <tr class="text-left text-gray-400 text-sm border-b border-gray-700">
+                <th class="pb-2">Strategy Name</th>
+                <th class="pb-2">Description</th>
+                <th class="pb-2">Trees</th>
+                <th class="pb-2">Workflows</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${state.strategies.map(s => `
+                <tr onclick="selectStrategy('${s.id}')" 
+                    class="cursor-pointer hover:bg-gray-700 border-b border-gray-800 ${selectedStrategyId === s.id ? 'bg-blue-900/30 border-l-4 border-l-blue-500' : ''}">
+                  <td class="py-3 pr-4">
+                    <span class="font-medium text-white">${escapeHtml(s.name)}</span>
+                  </td>
+                  <td class="py-3 pr-4 text-sm text-gray-400">${escapeHtml(s.description || 'No description')}</td>
+                  <td class="py-3 pr-4 text-sm text-blue-400">${s.treeIds?.length || 0}</td>
+                  <td class="py-3 text-sm text-green-400">${s.workflowIds?.length || 0}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
       } else {
         strategiesList.innerHTML = '<p class="text-gray-500 text-sm">No strategies</p>';
       }
 
-      // Update tasks list (show recent 10)
+      // Update tasks list (show all tasks as cards with full info)
       const tasksList = document.getElementById('tasks-list');
       if (tasks.length > 0) {
-        const recentTasks = tasks.slice(-10).reverse();
-        tasksList.innerHTML = recentTasks.map(t => `
-          <div class="flex items-center justify-between bg-gray-800 rounded p-2">
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium text-white truncate">${escapeHtml(t.name)}</p>
-              <p class="text-xs text-gray-400 truncate">${escapeHtml(t.description || '')}</p>
+        tasksList.innerHTML = tasks.map(t => {
+          const parentTask = t.parentTaskId ? state.tasks?.find(pt => pt.id === t.parentTaskId) : null;
+          const dependencyTasks = t.dependencies?.map(depId => state.tasks?.find(dt => dt.id === depId)).filter(Boolean) || [];
+          
+          return `
+            <div class="bg-gray-800 rounded-lg p-4 border-l-4 border-l-${getStatusBorderColor(t.status)}">
+              <div class="flex justify-between items-start mb-2">
+                <div class="flex-1">
+                  <h4 class="font-medium text-white">${escapeHtml(t.name)}</h4>
+                  <p class="text-xs text-gray-400 mt-1">ID: ${t.id}</p>
+                </div>
+                <span class="px-2 py-1 text-xs font-medium rounded status-${t.status}">${t.status}</span>
+              </div>
+              
+              ${t.description ? `<p class="text-sm text-gray-300 mb-3">${escapeHtml(t.description)}</p>` : ''}
+              
+              <div class="grid grid-cols-2 gap-2 text-xs text-gray-400 mb-3">
+                <div>
+                  <span class="text-gray-500">Created:</span> ${new Date(t.createdAt).toLocaleString()}
+                </div>
+                <div>
+                  <span class="text-gray-500">Updated:</span> ${new Date(t.updatedAt).toLocaleString()}
+                </div>
+                ${t.completedAt ? `
+                <div>
+                  <span class="text-gray-500">Completed:</span> ${new Date(t.completedAt).toLocaleString()}
+                </div>
+                ` : ''}
+                ${t.failedAt ? `
+                <div>
+                  <span class="text-gray-500">Failed:</span> ${new Date(t.failedAt).toLocaleString()}
+                </div>
+                ` : ''}
+              </div>
+              
+              ${parentTask ? `
+                <div class="text-xs text-gray-400 mb-2">
+                  <span class="text-gray-500">Parent Task:</span> ${escapeHtml(parentTask.name)}
+                </div>
+              ` : ''}
+              
+              ${dependencyTasks.length > 0 ? `
+                <div class="text-xs text-gray-400 mb-2">
+                  <span class="text-gray-500">Dependencies:</span> ${dependencyTasks.map(dt => escapeHtml(dt.name)).join(', ')}
+                </div>
+              ` : ''}
+              
+              ${t.errorMessage ? `
+                <div class="mt-2 p-2 bg-red-900/30 rounded text-xs text-red-400">
+                  <span class="font-medium">Error:</span> ${escapeHtml(t.errorMessage)}
+                </div>
+              ` : ''}
+              
+              ${t.strategyId ? `
+                <div class="text-xs text-gray-400 mt-2">
+                  <span class="text-gray-500">Strategy:</span> ${t.strategyId}
+                </div>
+              ` : ''}
+              
+              ${t.order !== undefined ? `
+                <div class="text-xs text-gray-400">
+                  <span class="text-gray-500">Order:</span> ${t.order}
+                </div>
+              ` : ''}
             </div>
-            <span class="ml-2 text-xs status-${t.status}">${t.status}</span>
-          </div>
-        `).join('');
+          `;
+        }).join('');
       } else {
         tasksList.innerHTML = '<p class="text-gray-500 text-sm">No tasks</p>';
       }
 
-      // Update trees list
+      // Update trees list with nested thoughts (collapsible tree)
       const treesList = document.getElementById('trees-list');
-      if (state.trees?.length > 0) {
-        treesList.innerHTML = state.trees.map(t => `
-          <div class="bg-gray-800 rounded p-3">
-            <div class="flex justify-between items-start">
+      
+      // Filter trees based on selected strategy
+      let filteredTrees = state.trees || [];
+      if (selectedStrategyId) {
+        const selectedStrategy = state.strategies?.find(s => s.id === selectedStrategyId);
+        if (selectedStrategy && selectedStrategy.treeIds) {
+          filteredTrees = filteredTrees.filter(t => selectedStrategy.treeIds.includes(t.id));
+        }
+      }
+      
+      if (filteredTrees.length > 0) {
+        treesList.innerHTML = filteredTrees.map(t => {
+          const thoughts = t.thoughts || {};
+          const thoughtsArray = Object.values(thoughts);
+          
+          // Build tree HTML recursively with detailed thought cards
+          const buildThoughtTree = (thoughtId, depth = 0) => {
+            const thought = thoughts[thoughtId];
+            if (!thought) return '';
+            
+            const isExpanded = expandedThoughts.has(thoughtId);
+            const hasChildren = thought.children && thought.children.length > 0;
+            const stateIcon = getStateIcon(thought.state);
+            const evalScore = thought.evaluation !== null && thought.evaluation !== undefined ? thought.evaluation : null;
+            const indent = depth * 20;
+            
+            let html = `
+              <div class="thought-node mb-2" style="margin-left: ${indent}px">
+                <div class="bg-gray-700/50 rounded p-3 cursor-pointer hover:bg-gray-700 transition-colors" onclick="toggleThought('${thoughtId}')">
+                  <div class="flex items-start justify-between mb-2">
+                    <div class="flex items-center flex-1">
+                      ${hasChildren ? `
+                        <span class="mr-2 text-gray-400 text-xs">${isExpanded ? '▼' : '▶'}</span>
+                      ` : '<span class="mr-2 text-gray-600 text-xs">•</span>'}
+                      <span class="text-sm font-medium text-white">${stateIcon} ${escapeHtml(thought.content)}</span>
+                    </div>
+                    ${evalScore !== null ? `
+                      <span class="ml-2 px-2 py-1 text-xs font-medium rounded bg-blue-900/50 text-blue-300">${evalScore}/100</span>
+                    ` : ''}
+                  </div>
+                  
+                  <div class="grid grid-cols-2 gap-2 text-xs text-gray-400 mb-2">
+                    <div>
+                      <span class="text-gray-500">ID:</span> ${thought.id}
+                    </div>
+                    <div>
+                      <span class="text-gray-500">Depth:</span> ${thought.depth}
+                    </div>
+                    <div>
+                      <span class="text-gray-500">Created:</span> ${new Date(thought.createdAt).toLocaleString()}
+                    </div>
+                    <div>
+                      <span class="text-gray-500">Updated:</span> ${new Date(thought.updatedAt).toLocaleString()}
+                    </div>
+                  </div>
+                  
+                  ${thought.creativity !== null && thought.creativity !== undefined ? `
+                    <div class="text-xs text-gray-400 mb-1">
+                      <span class="text-gray-500">Creativity:</span> ${thought.creativity}/100
+                    </div>
+                  ` : ''}
+                  
+                  ${thought.risk !== null && thought.risk !== undefined ? `
+                    <div class="text-xs text-gray-400 mb-1">
+                      <span class="text-gray-500">Risk:</span> ${thought.risk}/100
+                    </div>
+                  ` : ''}
+                  
+                  ${thought.criteriaScores && Object.keys(thought.criteriaScores).length > 0 ? `
+                    <div class="text-xs text-gray-400 mb-2">
+                      <span class="text-gray-500">Criteria:</span> ${Object.entries(thought.criteriaScores).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                    </div>
+                  ` : ''}
+                  
+                  ${thought.verified ? `
+                    <div class="text-xs text-green-400 mb-1">
+                      ✓ Verified: ${escapeHtml(thought.verificationNotes || '')}
+                    </div>
+                  ` : ''}
+                  
+                  ${thought.state === 'evaluated' && thought.evaluation !== null ? `
+                    <div class="text-xs text-gray-400">
+                      <span class="text-gray-500">State:</span> ${thought.state} (Score: ${thought.evaluation})
+                    </div>
+                  ` : thought.state !== 'pending' ? `
+                    <div class="text-xs text-gray-400">
+                      <span class="text-gray-500">State:</span> ${thought.state}
+                    </div>
+                  ` : ''}
+                </div>
+            `;
+            
+            if (hasChildren && isExpanded) {
+              html += '<div class="children-container mt-2">';
+              thought.children.forEach(childId => {
+                html += buildThoughtTree(childId, depth + 1);
+              });
+              html += '</div>';
+            }
+            
+            html += '</div>';
+            return html;
+          };
+          
+          const treeHtml = t.rootId ? buildThoughtTree(t.rootId) : '<p class="text-gray-500 text-sm">No root thought</p>';
+
+          return `
+          <div class="bg-gray-800 rounded p-4 ${selectedStrategyId ? 'border-l-4 border-l-blue-500' : ''}">
+            <div class="flex justify-between items-start mb-3">
               <div class="flex-1">
                 <h4 class="font-medium text-white">${escapeHtml(t.goal)}</h4>
-                <p class="text-xs text-gray-400 mt-1">Thoughts: ${Object.keys(t.thoughts || {}).length}</p>
-                <p class="text-xs text-gray-400">Max Depth: ${t.maxDepth || 10}</p>
+                <p class="text-xs text-gray-400 mt-1">Thoughts: ${thoughtsArray.length} | Max Depth: ${t.maxDepth || 10}</p>
               </div>
-              <button onclick="visualizeTree('${t.id}')" class="ml-4 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors">
-                Visualize
-              </button>
+              <div class="flex gap-2">
+                <button onclick="expandAllThoughts('${t.id}')" class="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors">
+                  Expand All
+                </button>
+                <button onclick="collapseAllThoughts('${t.id}')" class="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors">
+                  Collapse All
+                </button>
+              </div>
+            </div>
+            <div class="mt-2 tree-container">
+              ${treeHtml}
             </div>
           </div>
-        `).join('');
+        `;
+        }).join('');
       } else {
-        treesList.innerHTML = '<p class="text-gray-500 text-sm">No trees</p>';
+        treesList.innerHTML = selectedStrategyId 
+          ? '<p class="text-gray-500 text-sm">No trees associated with selected strategy</p>'
+          : '<p class="text-gray-500 text-sm">No trees</p>';
       }
 
-      // Update workflows list
+      // Update workflows list with nested tasks (collapsible tree)
       const workflowsList = document.getElementById('workflows-list');
-      if (state.workflows?.length > 0) {
-        workflowsList.innerHTML = state.workflows.map(w => `
-          <div class="bg-gray-800 rounded p-3">
-            <h4 class="font-medium text-white">${escapeHtml(w.name)}</h4>
-            <p class="text-xs text-gray-400 mt-1">${escapeHtml(w.description || 'No description')}</p>
-            <p class="text-xs text-gray-400 mt-1">Tasks: ${w.taskIds?.length || 0}</p>
+      
+      // Filter workflows based on selected strategy
+      let filteredWorkflows = state.workflows || [];
+      if (selectedStrategyId) {
+        const selectedStrategy = state.strategies?.find(s => s.id === selectedStrategyId);
+        if (selectedStrategy && selectedStrategy.workflowIds) {
+          filteredWorkflows = filteredWorkflows.filter(w => selectedStrategy.workflowIds.includes(w.id));
+        }
+      }
+      
+      if (filteredWorkflows.length > 0) {
+        workflowsList.innerHTML = filteredWorkflows.map(w => {
+          const workflowTasks = w.taskIds?.map(taskId => state.tasks?.find(t => t.id === taskId)).filter(Boolean) || [];
+          const isExpanded = expandedWorkflows.has(w.id);
+          
+          // Build task tree recursively with detailed task cards
+          const buildTaskTree = (task, depth = 0) => {
+            if (!task) return '';
+            
+            const indent = depth * 20;
+            const subtasks = state.tasks?.filter(t => t.parentTaskId === task.id) || [];
+            const hasSubtasks = subtasks.length > 0;
+            const isTaskExpanded = expandedWorkflows.has(task.id);
+            const parentTask = task.parentTaskId ? state.tasks?.find(pt => pt.id === task.parentTaskId) : null;
+            const dependencyTasks = task.dependencies?.map(depId => state.tasks?.find(dt => dt.id === depId)).filter(Boolean) || [];
+            
+            let html = `
+              <div class="task-node mb-3" style="margin-left: ${indent}px">
+                <div class="bg-gray-800 rounded-lg p-4 border-l-4 border-l-${getStatusBorderColor(task.status)}">
+                  <div class="flex justify-between items-start mb-2">
+                    <div class="flex-1">
+                      <div class="flex items-center">
+                        ${hasSubtasks ? `
+                          <span class="mr-2 text-gray-400 text-xs cursor-pointer" onclick="toggleTask('${task.id}')">${isTaskExpanded ? '▼' : '▶'}</span>
+                        ` : '<span class="mr-2 text-gray-600 text-xs">•</span>'}
+                        <h4 class="font-medium text-white">${escapeHtml(task.name)}</h4>
+                      </div>
+                      <p class="text-xs text-gray-400 mt-1">ID: ${task.id}</p>
+                    </div>
+                    <span class="px-2 py-1 text-xs font-medium rounded status-${task.status}">${task.status}</span>
+                  </div>
+                  
+                  ${task.description ? `<p class="text-sm text-gray-300 mb-3">${escapeHtml(task.description)}</p>` : ''}
+                  
+                  <div class="grid grid-cols-2 gap-2 text-xs text-gray-400 mb-3">
+                    <div>
+                      <span class="text-gray-500">Created:</span> ${new Date(task.createdAt).toLocaleString()}
+                    </div>
+                    <div>
+                      <span class="text-gray-500">Updated:</span> ${new Date(task.updatedAt).toLocaleString()}
+                    </div>
+                    ${task.completedAt ? `
+                    <div>
+                      <span class="text-gray-500">Completed:</span> ${new Date(task.completedAt).toLocaleString()}
+                    </div>
+                    ` : ''}
+                    ${task.failedAt ? `
+                    <div>
+                      <span class="text-gray-500">Failed:</span> ${new Date(task.failedAt).toLocaleString()}
+                    </div>
+                    ` : ''}
+                  </div>
+                  
+                  ${parentTask ? `
+                    <div class="text-xs text-gray-400 mb-2">
+                      <span class="text-gray-500">Parent Task:</span> ${escapeHtml(parentTask.name)}
+                    </div>
+                  ` : ''}
+                  
+                  ${dependencyTasks.length > 0 ? `
+                    <div class="text-xs text-gray-400 mb-2">
+                      <span class="text-gray-500">Dependencies:</span> ${dependencyTasks.map(dt => escapeHtml(dt.name)).join(', ')}
+                    </div>
+                  ` : ''}
+                  
+                  ${task.errorMessage ? `
+                    <div class="mt-2 p-2 bg-red-900/30 rounded text-xs text-red-400">
+                      <span class="font-medium">Error:</span> ${escapeHtml(task.errorMessage)}
+                    </div>
+                  ` : ''}
+                  
+                  ${task.strategyId ? `
+                    <div class="text-xs text-gray-400 mt-2">
+                      <span class="text-gray-500">Strategy:</span> ${task.strategyId}
+                    </div>
+                  ` : ''}
+                  
+                  ${task.order !== undefined ? `
+                    <div class="text-xs text-gray-400">
+                      <span class="text-gray-500">Order:</span> ${task.order}
+                    </div>
+                  ` : ''}
+                </div>
+            `;
+            
+            if (hasSubtasks && isTaskExpanded) {
+              html += '<div class="children-container mt-2">';
+              subtasks.forEach(subtask => {
+                html += buildTaskTree(subtask, depth + 1);
+              });
+              html += '</div>';
+            }
+            
+            html += '</div>';
+            return html;
+          };
+          
+          // Build task tree starting from root tasks (no parent)
+          const rootTasks = workflowTasks.filter(t => !t.parentTaskId);
+          const tasksHtml = rootTasks.length > 0 ? rootTasks.map(task => buildTaskTree(task)).join('') : '<p class="text-gray-500 text-sm">No tasks</p>';
+
+          return `
+          <div class="bg-gray-800 rounded p-4 ${selectedStrategyId ? 'border-l-4 border-l-green-500' : ''}">
+            <div class="flex justify-between items-start mb-3">
+              <div class="flex-1">
+                <h4 class="font-medium text-white">${escapeHtml(w.name)}</h4>
+                <p class="text-xs text-gray-400 mt-1">${escapeHtml(w.description || 'No description')}</p>
+                <p class="text-xs text-gray-400">Tasks: ${workflowTasks.length}</p>
+              </div>
+              <div class="flex gap-2">
+                <button onclick="expandAllTasks('${w.id}')" class="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors">
+                  Expand All
+                </button>
+                <button onclick="collapseAllTasks('${w.id}')" class="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors">
+                  Collapse All
+                </button>
+              </div>
+            </div>
+            <div class="mt-2 workflow-container">
+              ${isExpanded ? tasksHtml : '<p class="text-gray-500 text-sm cursor-pointer hover:text-gray-300" onclick="toggleWorkflow(\'' + w.id + '\')">Click to expand tasks</p>'}
+            </div>
           </div>
-        `).join('');
+        `;
+        }).join('');
       } else {
-        workflowsList.innerHTML = '<p class="text-gray-500 text-sm">No workflows</p>';
+        workflowsList.innerHTML = selectedStrategyId 
+          ? '<p class="text-gray-500 text-sm">No workflows associated with selected strategy</p>'
+          : '<p class="text-gray-500 text-sm">No workflows</p>';
       }
 
       // Update cognitive links list
       const linksList = document.getElementById('links-list');
       const links = state.cognitiveLinks || [];
       if (links.length > 0) {
-        linksList.innerHTML = links.slice(0, 10).map(l => `
+        linksList.innerHTML = links.map(l => {
+          // Determine which ID is thought and which is task based on types
+          const thoughtId = l.fromType === 'thought' ? l.fromId : (l.toType === 'thought' ? l.toId : null);
+          const taskId = l.fromType === 'task' ? l.fromId : (l.toType === 'task' ? l.toId : null);
+
+          // Determine link direction
+          let linkDirection = { text: 'unknown', class: 'text-gray-500' };
+          if (l.fromType === 'thought' && l.toType === 'task') {
+            linkDirection = { text: 'thought→task', class: 'text-blue-400 font-bold' };
+          } else if (l.fromType === 'task' && l.toType === 'thought') {
+            linkDirection = { text: 'task→thought', class: 'text-green-400 font-bold' };
+          }
+
+          // Find thought content from trees
+          let thoughtContent = 'N/A';
+          if (thoughtId) {
+            for (const tree of state.trees || []) {
+              if (tree.thoughts) {
+                const thought = Object.values(tree.thoughts).find(t => t.id === thoughtId);
+                if (thought) {
+                  thoughtContent = thought.content;
+                  break;
+                }
+              }
+            }
+          }
+
+          // Find task name from tasks
+          let taskName = 'N/A';
+          if (taskId) {
+            const task = state.tasks?.find(t => t.id === taskId);
+            if (task) {
+              taskName = task.name;
+            }
+          }
+
+          return `
           <div class="bg-gray-800 rounded p-3">
             <div class="flex justify-between items-start">
               <div class="flex-1">
-                <p class="text-sm text-white"><span class="text-blue-400">Thought:</span> ${escapeHtml(l.thoughtId || 'N/A')}</p>
-                <p class="text-sm text-white"><span class="text-green-400">Task:</span> ${escapeHtml(l.taskId || 'N/A')}</p>
+                <p class="text-sm text-white"><span class="text-blue-400">Thought:</span> ${escapeHtml(thoughtContent)}</p>
+                <p class="text-sm text-white"><span class="text-green-400">Task:</span> ${escapeHtml(taskName)}</p>
                 <p class="text-xs text-gray-400 mt-1">Reason: ${escapeHtml(l.reason || 'No reason')}</p>
               </div>
-              <span class="text-xs text-gray-500">${l.treeId ? `Tree: ${l.treeId.substring(0, 8)}...` : ''}</span>
+              <span class="text-xs ${linkDirection.class}">${linkDirection.text}</span>
             </div>
           </div>
-        `).join('');
-        if (links.length > 10) {
-          linksList.innerHTML += `<p class="text-gray-500 text-sm mt-2">+${links.length - 10} more links</p>`;
-        }
+        `}).join('');
       } else {
         linksList.innerHTML = '<p class="text-gray-500 text-sm">No cognitive links</p>';
       }
@@ -387,58 +722,6 @@
       }
     }
 
-    function visualizeTree(treeId) {
-      const tree = state.trees?.find(t => t.id === treeId);
-      if (!tree) return;
-
-      const panel = document.getElementById('tree-visualization-panel');
-      const content = document.getElementById('tree-visualization-content');
-
-      const ascii = generateTreeAscii(tree);
-      content.textContent = ascii;
-      panel.classList.remove('hidden');
-      panel.scrollIntoView({ behavior: 'smooth' });
-    }
-
-    function closeTreeVisualization() {
-      const panel = document.getElementById('tree-visualization-panel');
-      panel.classList.add('hidden');
-    }
-
-    function generateTreeAscii(tree) {
-      const lines = [];
-      lines.push(`Tree: ${tree.id}`);
-      lines.push(`Goal: ${tree.goal}`);
-      lines.push(`Max Depth: ${tree.maxDepth}`);
-      lines.push('');
-
-      const thoughts = tree.thoughts || {};
-      const visualizeThought = (thoughtId, prefix, isLast) => {
-        const thought = thoughts[thoughtId];
-        if (!thought) return;
-
-        const connector = isLast ? '└── ' : '├── ';
-        const content = thought.content;
-        const evalScore = thought.evaluation !== null && thought.evaluation !== undefined ? ` [${thought.evaluation}]` : '';
-        const stateIcon = getStateIcon(thought.state);
-
-        lines.push(`${prefix}${connector}${stateIcon} ${content}${evalScore}`);
-
-        const children = thought.children || [];
-        const newPrefix = prefix + (isLast ? '    ' : '│   ');
-
-        children.forEach((childId, index) => {
-          visualizeThought(childId, newPrefix, index === children.length - 1);
-        });
-      };
-
-      if (tree.rootId) {
-        visualizeThought(tree.rootId, '', true);
-      }
-
-      return lines.join('\n');
-    }
-
     function getStateIcon(state) {
       switch (state) {
         case 'pending': return '○';
@@ -447,6 +730,106 @@
         case 'pruned': return '✗';
         default: return '?';
       }
+    }
+
+    function getStatusBorderColor(status) {
+      switch (status) {
+        case 'pending': return 'yellow-500';
+        case 'in_progress': return 'blue-500';
+        case 'completed': return 'green-500';
+        case 'failed': return 'red-500';
+        default: return 'gray-500';
+      }
+    }
+
+    function selectStrategy(strategyId) {
+      selectedStrategyId = strategyId;
+      updateDashboard(false);
+    }
+
+    function toggleThought(thoughtId) {
+      if (expandedThoughts.has(thoughtId)) {
+        expandedThoughts.delete(thoughtId);
+      } else {
+        expandedThoughts.add(thoughtId);
+      }
+      updateDashboard(false);
+    }
+
+    function expandAllThoughts(treeId) {
+      const tree = state.trees?.find(t => t.id === treeId);
+      if (!tree) return;
+      
+      const thoughts = tree.thoughts || {};
+      Object.keys(thoughts).forEach(thoughtId => {
+        expandedThoughts.add(thoughtId);
+      });
+      updateDashboard(false);
+    }
+
+    function collapseAllThoughts(treeId) {
+      const tree = state.trees?.find(t => t.id === treeId);
+      if (!tree) return;
+      
+      const thoughts = tree.thoughts || {};
+      Object.keys(thoughts).forEach(thoughtId => {
+        expandedThoughts.delete(thoughtId);
+      });
+      updateDashboard(false);
+    }
+
+    function toggleWorkflow(workflowId) {
+      if (expandedWorkflows.has(workflowId)) {
+        expandedWorkflows.delete(workflowId);
+      } else {
+        expandedWorkflows.add(workflowId);
+      }
+      updateDashboard(false);
+    }
+
+    function toggleTask(taskId) {
+      if (expandedWorkflows.has(taskId)) {
+        expandedWorkflows.delete(taskId);
+      } else {
+        expandedWorkflows.add(taskId);
+      }
+      updateDashboard(false);
+    }
+
+    function expandAllTasks(workflowId) {
+      const workflow = state.workflows?.find(w => w.id === workflowId);
+      if (!workflow) return;
+      
+      expandedWorkflows.add(workflowId);
+      const workflowTasks = workflow.taskIds?.map(taskId => state.tasks?.find(t => t.id === taskId)).filter(Boolean) || [];
+      
+      const expandTaskRecursive = (task) => {
+        if (!task) return;
+        expandedWorkflows.add(task.id);
+        const subtasks = state.tasks?.filter(t => t.parentTaskId === task.id) || [];
+        subtasks.forEach(subtask => expandTaskRecursive(subtask));
+      };
+      
+      workflowTasks.forEach(task => expandTaskRecursive(task));
+      updateDashboard(false);
+    }
+
+    function collapseAllTasks(workflowId) {
+      const workflow = state.workflows?.find(w => w.id === workflowId);
+      if (!workflow) return;
+      
+      expandedWorkflows.delete(workflowId);
+      const workflowTasks = workflow.taskIds?.map(taskId => state.tasks?.find(t => t.id === taskId)).filter(Boolean) || [];
+      
+      const collapseTaskRecursive = (task) => {
+        if (!task) return;
+        expandedWorkflows.delete(task.id);
+        const subtasks = state.tasks?.filter(t => t.parentTaskId === task.id) || [];
+        subtasks.forEach(subtask => collapseTaskRecursive(subtask));
+      };
+      
+      workflowTasks.forEach(task => collapseTaskRecursive(task));
+      updateDashboard(false);
     }
 
     // Initial load
