@@ -53,16 +53,25 @@ export class ToTService extends BaseService {
 
   /**
    * Create a new Tree of Thoughts
+   * REQUIRES strategyId - tree must belong to exactly one strategy
    */
   createTree(params: {
     goal: string;
     rootContent: string;
     maxDepth?: number;
     sessionId?: string;
+    strategyId: string; // Mandatory
     metadata?: Record<string, any>;
   }): Tree {
     validateRequiredString(params.goal, 'goal');
     validateRequiredString(params.rootContent, 'rootContent');
+    validateRequiredString(params.strategyId, 'strategyId');
+
+    // Validate strategy exists
+    const strategy = this.state.strategies.get(params.strategyId);
+    if (!strategy) {
+      throw new ThoughtflowError(`Strategy '${params.strategyId}' not found`, 'STRATEGY_NOT_FOUND');
+    }
 
     // Normalize the goal for comparison
     const normalizedGoal = this.normalizeKey(params.goal);
@@ -114,12 +123,21 @@ export class ToTService extends BaseService {
       createdAt: now,
       updatedAt: now,
       maxDepth: params.maxDepth || 10,
+      strategyId: params.strategyId,
       metadata: treeMetadata
     };
 
     this.state.trees.set(treeId, tree);
+
+    // Add tree to strategy's treeIds
+    if (!strategy.treeIds.includes(treeId)) {
+      strategy.treeIds.push(treeId);
+      strategy.updatedAt = now;
+      this.state.strategies.set(params.strategyId, strategy);
+    }
+
     this.triggerSave();
-    logger.info(`Created tree: ${treeId} - ${params.goal} (normalized: ${normalizedGoal})`);
+    logger.info(`Created tree: ${treeId} - ${params.goal} (normalized: ${normalizedGoal}) in strategy ${params.strategyId}`);
 
     // Enforce cognitive hierarchy if cognitiveBridgeService is available
     if (this.cognitiveBridgeService) {
@@ -354,6 +372,67 @@ export class ToTService extends BaseService {
   }
 
   /**
+   * Check if all children of a thought are evaluated
+   */
+  private areAllChildrenEvaluated(tree: Tree, thought: Thought): boolean {
+    if (thought.children.length === 0) {
+      return false;
+    }
+    
+    for (const childId of thought.children) {
+      const childThought = tree.thoughts.get(childId);
+      if (!childThought || childThought.state !== 'evaluated') {
+        return false;
+      }
+    }
+    
+    return true;
+  }
+
+  /**
+   * Automatically evaluate parent if all its children are evaluated
+   * Recursively propagates up the tree
+   */
+  private autoEvaluateParent(tree: Tree, thoughtId: string): void {
+    const thought = tree.thoughts.get(thoughtId);
+    if (!thought || !thought.parentId) {
+      return;
+    }
+    
+    const parentThought = tree.thoughts.get(thought.parentId);
+    if (!parentThought) {
+      return;
+    }
+    
+    // Check if all children of parent are now evaluated
+    if (this.areAllChildrenEvaluated(tree, parentThought)) {
+      // Calculate average evaluation from children
+      let totalScore = 0;
+      let evaluatedCount = 0;
+      
+      for (const childId of parentThought.children) {
+        const child = tree.thoughts.get(childId);
+        if (child && child.evaluation !== null) {
+          totalScore += child.evaluation;
+          evaluatedCount++;
+        }
+      }
+      
+      const averageScore = evaluatedCount > 0 ? totalScore / evaluatedCount : 0;
+      
+      // Mark parent as evaluated with average score
+      parentThought.evaluation = averageScore;
+      parentThought.state = 'evaluated';
+      parentThought.updatedAt = new Date().toISOString();
+      
+      logger.info(`Auto-evaluated parent thought ${parentThought.id} with average score ${averageScore.toFixed(2)} from ${evaluatedCount} children`);
+      
+      // Recursively check parent's parent
+      this.autoEvaluateParent(tree, parentThought.id);
+    }
+  }
+
+  /**
    * Evaluate a thought
    */
   evaluateThought(params: {
@@ -395,6 +474,10 @@ export class ToTService extends BaseService {
     }
     
     tree.updatedAt = new Date().toISOString();
+    
+    // Auto-evaluate parent if all its children are now evaluated
+    this.autoEvaluateParent(tree, params.thoughtId);
+    
     this.triggerSave();
     
     // Return minimal summary
@@ -710,6 +793,10 @@ export class ToTService extends BaseService {
     thought.metadata.evaluatedBy = 'llm';
 
     tree.updatedAt = new Date().toISOString();
+    
+    // Auto-evaluate parent if all its children are now evaluated
+    this.autoEvaluateParent(tree, params.thoughtId);
+    
     this.triggerSave();
 
     logger.info(`Evaluated thought ${params.thoughtId} using LLM with score ${evaluation.overallScore}`);

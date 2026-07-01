@@ -36,6 +36,7 @@ export class TaskOrchestratorService extends BaseService {
 
   /**
    * Create a new task
+   * REQUIRES workflowId - task must belong to exactly one workflow
    */
   createTask(task: {
     name: string;
@@ -44,26 +45,47 @@ export class TaskOrchestratorService extends BaseService {
     parentTaskId?: string;
     order?: number;
     status?: Task['status'];
-    strategyId?: string;
+    workflowId: string; // Mandatory
     metadata?: Record<string, any>;
   }): Task {
     validateRequiredString(task.name, 'name');
+    validateRequiredString(task.workflowId, 'workflowId');
     
     const id = this.generateId(task.name);
     const now = new Date().toISOString();
     
-    // Validate parent task exists
+    // Validate workflow exists
+    const workflow = this.state.workflows.get(task.workflowId);
+    if (!workflow) {
+      throw new WorkflowNotFoundError(task.workflowId);
+    }
+    
+    // Validate parent task exists and is in same workflow
     if (task.parentTaskId) {
-      if (!this.state.tasks.has(task.parentTaskId)) {
+      const parentTask = this.state.tasks.get(task.parentTaskId);
+      if (!parentTask) {
         throw new TaskNotFoundError(task.parentTaskId);
+      }
+      if (parentTask.workflowId !== task.workflowId) {
+        throw new ThoughtflowError(
+          `Parent task '${task.parentTaskId}' belongs to workflow '${parentTask.workflowId}', cannot create subtask in different workflow '${task.workflowId}'`,
+          'WORKFLOW_BOUNDARY_VIOLATION'
+        );
       }
     }
     
-    // Validate dependencies exist
+    // Validate dependencies exist and are in same workflow
     if (task.dependencies) {
       for (const depId of task.dependencies) {
-        if (!this.state.tasks.has(depId)) {
+        const depTask = this.state.tasks.get(depId);
+        if (!depTask) {
           throw new ThoughtflowError(`Dependency task '${depId}' not found`, 'DEPENDENCY_NOT_FOUND');
+        }
+        if (depTask.workflowId !== task.workflowId) {
+          throw new ThoughtflowError(
+            `Dependency task '${depId}' belongs to workflow '${depTask.workflowId}', cannot depend on task in different workflow '${task.workflowId}'`,
+            'WORKFLOW_BOUNDARY_VIOLATION'
+          );
         }
       }
     }
@@ -78,13 +100,22 @@ export class TaskOrchestratorService extends BaseService {
       status: task.status || 'pending',
       createdAt: now,
       updatedAt: now,
-      strategyId: task.strategyId,
+      workflowId: task.workflowId,
+      strategyId: workflow.strategyId, // Denormalize from workflow
       metadata: task.metadata
     };
     
     this.state.tasks.set(id, newTask);
+    
+    // Add task to workflow's taskIds
+    if (!workflow.taskIds.includes(id)) {
+      workflow.taskIds.push(id);
+      workflow.updatedAt = now;
+      this.state.workflows.set(task.workflowId, workflow);
+    }
+    
     this.triggerSave();
-    logger.info(`Created task: ${id} - ${task.name}`);
+    logger.info(`Created task: ${id} - ${task.name} in workflow ${task.workflowId}`);
     // Return minimal summary
     return { id, name: newTask.name, status: newTask.status } as Task;
   }
@@ -145,6 +176,8 @@ export class TaskOrchestratorService extends BaseService {
       task.status = updates.status;
       if (updates.status === 'completed') {
         task.completedAt = now;
+        // Auto-complete parent if all subtasks are now completed
+        this.autoCompleteParentTask(id);
       } else if (updates.status === 'failed') {
         task.failedAt = now;
       }
@@ -193,6 +226,7 @@ export class TaskOrchestratorService extends BaseService {
 
   /**
    * Delete a task (soft-delete)
+   * Also removes task from its workflow's taskIds
    */
   deleteTask(id: string): boolean {
     validateId(id, 'Task');
@@ -200,6 +234,20 @@ export class TaskOrchestratorService extends BaseService {
     if (!task) {
       return false;
     }
+    
+    // Remove task from workflow's taskIds
+    if (task.workflowId) {
+      const workflow = this.state.workflows.get(task.workflowId);
+      if (workflow) {
+        const index = workflow.taskIds.indexOf(id);
+        if (index > -1) {
+          workflow.taskIds.splice(index, 1);
+          workflow.updatedAt = new Date().toISOString();
+          this.state.workflows.set(task.workflowId, workflow);
+        }
+      }
+    }
+    
     this.softDeleteEntity(task);
     this.triggerSave();
     logger.info(`Soft-deleted task: ${id}`);
@@ -208,23 +256,39 @@ export class TaskOrchestratorService extends BaseService {
 
   /**
    * Create a workflow
+   * REQUIRES strategyId - workflow must belong to exactly one strategy
    */
   createWorkflow(workflow: {
     name: string;
     description?: string;
     taskIds: string[];
-    strategyId?: string;
+    strategyId: string; // Mandatory
     metadata?: Record<string, any>;
   }): Workflow {
     validateRequiredString(workflow.name, 'name');
+    validateRequiredString(workflow.strategyId, 'strategyId');
     
     const id = this.generateId(workflow.name);
     const now = new Date().toISOString();
     
-    // Validate all tasks exist
+    // Validate strategy exists
+    const strategy = this.state.strategies.get(workflow.strategyId);
+    if (!strategy) {
+      throw new ThoughtflowError(`Strategy '${workflow.strategyId}' not found`, 'STRATEGY_NOT_FOUND');
+    }
+    
+    // Validate all tasks exist and are not already owned by another workflow
     for (const taskId of workflow.taskIds) {
-      if (!this.state.tasks.has(taskId)) {
+      const task = this.state.tasks.get(taskId);
+      if (!task) {
         throw new TaskNotFoundError(taskId);
+      }
+      // Task must not already belong to a different workflow
+      if (task.workflowId && task.workflowId !== id) {
+        throw new ThoughtflowError(
+          `Task '${taskId}' already belongs to workflow '${task.workflowId}'. A task can belong to only one workflow.`,
+          'TASK_ALREADY_OWNED'
+        );
       }
     }
     
@@ -241,8 +305,26 @@ export class TaskOrchestratorService extends BaseService {
     };
     
     this.state.workflows.set(id, newWorkflow);
+    
+    // Update all tasks to have this workflowId and strategyId
+    for (const taskId of workflow.taskIds) {
+      const task = this.state.tasks.get(taskId);
+      if (task) {
+        task.workflowId = id;
+        task.strategyId = workflow.strategyId;
+        this.state.tasks.set(taskId, task);
+      }
+    }
+    
+    // Add workflow to strategy's workflowIds
+    if (!strategy.workflowIds.includes(id)) {
+      strategy.workflowIds.push(id);
+      strategy.updatedAt = now;
+      this.state.strategies.set(workflow.strategyId, strategy);
+    }
+    
     this.triggerSave();
-    logger.info(`Created workflow: ${id} - ${workflow.name}`);
+    logger.info(`Created workflow: ${id} - ${workflow.name} in strategy ${workflow.strategyId}`);
     // Return minimal summary
     return { id, name: newWorkflow.name, status: newWorkflow.status } as Workflow;
   }
@@ -301,6 +383,7 @@ export class TaskOrchestratorService extends BaseService {
 
   /**
    * Add tasks to a workflow
+   * ENFORCES single workflow ownership - each task can belong to only one workflow
    */
   addTasksToWorkflow(workflowId: string, taskIds: string[]): void {
     validateId(workflowId, 'Workflow');
@@ -310,16 +393,17 @@ export class TaskOrchestratorService extends BaseService {
       throw new WorkflowNotFoundError(workflowId);
     }
     
-    // Strategy isolation guardrail
-    if (workflow.strategyId) {
-      for (const taskId of taskIds) {
-        const task = this.state.tasks.get(taskId);
-        if (task && task.strategyId && task.strategyId !== workflow.strategyId) {
-          throw new ThoughtflowError(
-            `Cannot add task '${taskId}' from strategy '${task.strategyId}' to workflow '${workflowId}' belonging to strategy '${workflow.strategyId}'. Cross-strategy task sharing is not allowed.`,
-            'CROSS_STRATEGY_ISOLATION_VIOLATION'
-          );
-        }
+    // Enforce single workflow ownership for each task
+    for (const taskId of taskIds) {
+      const task = this.state.tasks.get(taskId);
+      if (!task) {
+        throw new TaskNotFoundError(taskId);
+      }
+      if (task.workflowId && task.workflowId !== workflowId) {
+        throw new ThoughtflowError(
+          `Task '${taskId}' already belongs to workflow '${task.workflowId}'. A task can belong to only one workflow.`,
+          'TASK_ALREADY_OWNED'
+        );
       }
     }
     
@@ -327,6 +411,13 @@ export class TaskOrchestratorService extends BaseService {
     for (const taskId of taskIds) {
       if (!workflow.taskIds.includes(taskId)) {
         workflow.taskIds.push(taskId);
+        // Update task's workflowId and strategyId
+        const task = this.state.tasks.get(taskId);
+        if (task) {
+          task.workflowId = workflowId;
+          task.strategyId = workflow.strategyId;
+          this.state.tasks.set(taskId, task);
+        }
       }
     }
     
@@ -338,6 +429,7 @@ export class TaskOrchestratorService extends BaseService {
 
   /**
    * Add a single task to a workflow at a specific position
+   * ENFORCES single workflow ownership - task can belong to only one workflow
    * position: -1 = end (default), 0 = beginning, or specific index
    */
   addTaskToWorkflow(workflowId: string, taskId: string, position: number = -1): Workflow {
@@ -354,11 +446,11 @@ export class TaskOrchestratorService extends BaseService {
       throw new TaskNotFoundError(taskId);
     }
     
-    // Strategy isolation guardrail
-    if (workflow.strategyId && task.strategyId && task.strategyId !== workflow.strategyId) {
+    // Enforce single workflow ownership
+    if (task.workflowId && task.workflowId !== workflowId) {
       throw new ThoughtflowError(
-        `Cannot add task '${taskId}' from strategy '${task.strategyId}' to workflow '${workflowId}' belonging to strategy '${workflow.strategyId}'. Cross-strategy task sharing is not allowed.`,
-        'CROSS_STRATEGY_ISOLATION_VIOLATION'
+        `Task '${taskId}' already belongs to workflow '${task.workflowId}'. A task can belong to only one workflow.`,
+        'TASK_ALREADY_OWNED'
       );
     }
     
@@ -376,6 +468,11 @@ export class TaskOrchestratorService extends BaseService {
     } else {
       workflow.taskIds.splice(position, 0, taskId);
     }
+    
+    // Update task's workflowId and strategyId
+    task.workflowId = workflowId;
+    task.strategyId = workflow.strategyId;
+    this.state.tasks.set(taskId, task);
     
     workflow.updatedAt = new Date().toISOString();
     this.triggerSave();
@@ -531,19 +628,19 @@ export class TaskOrchestratorService extends BaseService {
     for (const id of toDelete) {
       const strategy = this.state.strategies.get(id);
       if (strategy) {
-        // Clear strategyId from linked workflows
+        // Soft-delete linked workflows (they cannot exist without a strategy)
         for (const workflowId of strategy.workflowIds) {
           const workflow = this.state.workflows.get(workflowId);
           if (workflow) {
-            workflow.strategyId = undefined;
+            this.softDeleteEntity(workflow);
             this.state.workflows.set(workflowId, workflow);
           }
         }
-        // Clear strategyId from linked trees
+        // Soft-delete linked trees (trees cannot exist without a strategy)
         for (const treeId of strategy.treeIds) {
           const tree = this.state.trees.get(treeId);
           if (tree) {
-            tree.strategyId = undefined;
+            this.softDeleteEntity(tree);
             this.state.trees.set(treeId, tree);
           }
         }
@@ -597,27 +694,28 @@ export class TaskOrchestratorService extends BaseService {
 
   /**
    * Remove a tree from a strategy
+   * Since trees must belong to exactly one strategy, this soft-deletes the tree
    */
   removeTreeFromStrategy(strategyId: string, treeId: string): Strategy {
     validateId(strategyId, 'Strategy');
     validateId(treeId, 'Tree');
-    
+
     const strategy = this.getStrategy(strategyId);
     const tree = this.state.trees.get(treeId);
-    
+
     if (tree) {
-      // Clear strategyId from tree (unlink only, do not delete)
-      tree.strategyId = undefined;
+      // Soft-delete tree (it cannot exist without a strategy)
+      this.softDeleteEntity(tree);
       this.state.trees.set(treeId, tree);
     }
-    
+
     const index = strategy.treeIds.indexOf(treeId);
-    
+
     if (index > -1) {
       strategy.treeIds.splice(index, 1);
       strategy.updatedAt = new Date().toISOString();
       this.triggerSave();
-      logger.info(`Removed tree ${treeId} from strategy ${strategyId} (unlinked, not deleted)`);
+      logger.info(`Removed tree ${treeId} from strategy ${strategyId} (soft-deleted)`);
     }
 
     // Return minimal summary with LLM_instruction
@@ -626,6 +724,7 @@ export class TaskOrchestratorService extends BaseService {
 
   /**
    * Add a workflow to a strategy
+   * ENFORCES single strategy ownership - workflow can belong to only one strategy
    */
   addWorkflowToStrategy(strategyId: string, workflowId: string): Strategy {
     validateId(strategyId, 'Strategy');
@@ -638,10 +737,10 @@ export class TaskOrchestratorService extends BaseService {
       throw new WorkflowNotFoundError(workflowId);
     }
     
-    // Propagate strategyId to workflow
+    // Enforce single strategy ownership
     if (workflow.strategyId && workflow.strategyId !== strategyId) {
       throw new ThoughtflowError(
-        `Workflow '${workflowId}' already belongs to strategy '${workflow.strategyId}'. Cannot add to different strategy '${strategyId}'.`,
+        `Workflow '${workflowId}' already belongs to strategy '${workflow.strategyId}'. A workflow can belong to only one strategy.`,
         'WORKFLOW_ALREADY_OWNED'
       );
     }
@@ -653,12 +752,6 @@ export class TaskOrchestratorService extends BaseService {
     for (const taskId of workflow.taskIds) {
       const task = this.state.tasks.get(taskId);
       if (task) {
-        if (task.strategyId && task.strategyId !== strategyId) {
-          throw new ThoughtflowError(
-            `Task '${taskId}' already belongs to strategy '${task.strategyId}'. Cannot reassign to strategy '${strategyId}' via workflow '${workflowId}'.`,
-            'TASK_ALREADY_OWNED'
-          );
-        }
         task.strategyId = strategyId;
         this.state.tasks.set(taskId, task);
       }
@@ -677,6 +770,7 @@ export class TaskOrchestratorService extends BaseService {
 
   /**
    * Remove a workflow from a strategy
+   * Since workflows must belong to exactly one strategy, this soft-deletes the workflow
    */
   removeWorkflowFromStrategy(strategyId: string, workflowId: string): Strategy {
     validateId(strategyId, 'Strategy');
@@ -686,15 +780,15 @@ export class TaskOrchestratorService extends BaseService {
     const workflow = this.state.workflows.get(workflowId);
     
     if (workflow) {
-      // Clear strategyId from workflow (unlink only, do not delete)
-      workflow.strategyId = undefined;
+      // Soft-delete workflow (it cannot exist without a strategy)
+      this.softDeleteEntity(workflow);
       this.state.workflows.set(workflowId, workflow);
       
-      // Also clear strategyId from tasks in the workflow (optional, but keeps consistency)
+      // Also soft-delete all tasks in the workflow
       for (const taskId of workflow.taskIds) {
         const task = this.state.tasks.get(taskId);
         if (task) {
-          task.strategyId = undefined;
+          this.softDeleteEntity(task);
           this.state.tasks.set(taskId, task);
         }
       }
@@ -706,7 +800,7 @@ export class TaskOrchestratorService extends BaseService {
       strategy.workflowIds.splice(index, 1);
       strategy.updatedAt = new Date().toISOString();
       this.triggerSave();
-      logger.info(`Removed workflow ${workflowId} from strategy ${strategyId} (unlinked, not deleted)`);
+      logger.info(`Removed workflow ${workflowId} from strategy ${strategyId} (soft-deleted)`);
     }
 
     // Return minimal summary with LLM_instruction
@@ -1107,6 +1201,140 @@ export class TaskOrchestratorService extends BaseService {
   }
 
   // ============================================================================
+  // Hierarchy Validation Helpers
+  // ============================================================================
+
+  /**
+   * Validate that the hierarchy invariants are maintained
+   * Returns an object with validation results and any violations found
+   */
+  validateHierarchyInvariants(): {
+    valid: boolean;
+    violations: string[];
+    details: {
+      tasksWithoutWorkflow: string[];
+      workflowsWithoutStrategy: string[];
+      tasksInMultipleWorkflows: string[];
+      workflowsInMultipleStrategies: string[];
+      tasksWithWrongStrategy: string[];
+    };
+  } {
+    const violations: string[] = [];
+    const details = {
+      tasksWithoutWorkflow: [] as string[],
+      workflowsWithoutStrategy: [] as string[],
+      tasksInMultipleWorkflows: [] as string[],
+      workflowsInMultipleStrategies: [] as string[],
+      tasksWithWrongStrategy: [] as string[]
+    };
+
+    // Check tasks without workflowId
+    for (const [taskId, task] of this.state.tasks) {
+      if (!task.workflowId) {
+        details.tasksWithoutWorkflow.push(taskId);
+        violations.push(`Task '${taskId}' (${task.name}) has no workflowId`);
+      }
+    }
+
+    // Check workflows without strategyId
+    for (const [workflowId, workflow] of this.state.workflows) {
+      if (!workflow.strategyId) {
+        details.workflowsWithoutStrategy.push(workflowId);
+        violations.push(`Workflow '${workflowId}' (${workflow.name}) has no strategyId`);
+      }
+    }
+
+    // Check tasks in multiple workflows
+    const taskWorkflowCount = new Map<string, number>();
+    for (const workflow of this.state.workflows.values()) {
+      for (const taskId of workflow.taskIds) {
+        taskWorkflowCount.set(taskId, (taskWorkflowCount.get(taskId) || 0) + 1);
+      }
+    }
+    for (const [taskId, count] of taskWorkflowCount) {
+      if (count > 1) {
+        details.tasksInMultipleWorkflows.push(taskId);
+        violations.push(`Task '${taskId}' is in ${count} workflows (should be exactly 1)`);
+      }
+    }
+
+    // Check workflows in multiple strategies
+    const workflowStrategyCount = new Map<string, number>();
+    for (const strategy of this.state.strategies.values()) {
+      for (const workflowId of strategy.workflowIds) {
+        workflowStrategyCount.set(workflowId, (workflowStrategyCount.get(workflowId) || 0) + 1);
+      }
+    }
+    for (const [workflowId, count] of workflowStrategyCount) {
+      if (count > 1) {
+        details.workflowsInMultipleStrategies.push(workflowId);
+        violations.push(`Workflow '${workflowId}' is in ${count} strategies (should be exactly 1)`);
+      }
+    }
+
+    // Check tasks with wrong strategyId (denormalization mismatch)
+    for (const [taskId, task] of this.state.tasks) {
+      if (task.workflowId) {
+        const workflow = this.state.workflows.get(task.workflowId);
+        if (workflow && workflow.strategyId !== task.strategyId) {
+          details.tasksWithWrongStrategy.push(taskId);
+          violations.push(`Task '${taskId}' has strategyId '${task.strategyId}' but its workflow '${task.workflowId}' has strategyId '${workflow.strategyId}'`);
+        }
+      }
+    }
+
+    return {
+      valid: violations.length === 0,
+      violations,
+      details
+    };
+  }
+
+  /**
+   * Repair hierarchy invariants by fixing denormalization issues
+   * Returns the number of fixes applied
+   */
+  repairHierarchyInvariants(): number {
+    let fixes = 0;
+
+    // Fix task strategyId to match workflow
+    for (const [taskId, task] of this.state.tasks) {
+      if (task.workflowId) {
+        const workflow = this.state.workflows.get(task.workflowId);
+        if (workflow && workflow.strategyId !== task.strategyId) {
+          task.strategyId = workflow.strategyId;
+          this.state.tasks.set(taskId, task);
+          fixes++;
+          logger.info(`Fixed task '${taskId}' strategyId to match workflow '${task.workflowId}'`);
+        }
+      }
+    }
+
+    // Ensure workflow taskIds are consistent
+    for (const workflow of this.state.workflows.values()) {
+      const validTaskIds: string[] = [];
+      for (const taskId of workflow.taskIds) {
+        const task = this.state.tasks.get(taskId);
+        if (task && task.workflowId === workflow.id) {
+          validTaskIds.push(taskId);
+        }
+      }
+      if (validTaskIds.length !== workflow.taskIds.length) {
+        workflow.taskIds = validTaskIds;
+        workflow.updatedAt = new Date().toISOString();
+        fixes++;
+        logger.info(`Fixed workflow '${workflow.id}' taskIds`);
+      }
+    }
+
+    if (fixes > 0) {
+      this.triggerSave();
+    }
+
+    return fixes;
+  }
+
+  // ============================================================================
   // Task Hierarchy Support
   // ============================================================================
 
@@ -1126,7 +1354,58 @@ export class TaskOrchestratorService extends BaseService {
   }
 
   /**
+   * Check if all child tasks of a parent task are completed
+   */
+  private areAllSubtasksCompleted(parentTaskId: string): boolean {
+    const subtasks = Array.from(this.state.tasks.values())
+      .filter(task => task.parentTaskId === parentTaskId);
+    
+    if (subtasks.length === 0) {
+      return false;
+    }
+    
+    for (const subtask of subtasks) {
+      if (subtask.status !== 'completed') {
+        return false;
+      }
+    }
+    
+    return true;
+  }
+
+  /**
+   * Automatically complete parent task if all its subtasks are completed
+   * Recursively propagates up the task hierarchy
+   */
+  private autoCompleteParentTask(taskId: string): void {
+    const task = this.state.tasks.get(taskId);
+    if (!task || !task.parentTaskId) {
+      return;
+    }
+    
+    const parentTask = this.state.tasks.get(task.parentTaskId);
+    if (!parentTask) {
+      return;
+    }
+    
+    // Check if all subtasks of parent are now completed
+    if (this.areAllSubtasksCompleted(task.parentTaskId)) {
+      // Mark parent as completed
+      const now = new Date().toISOString();
+      parentTask.status = 'completed';
+      parentTask.completedAt = now;
+      parentTask.updatedAt = now;
+      
+      logger.info(`Auto-completed parent task ${parentTask.id} with ${this.getSubtasks(task.parentTaskId).length} completed subtasks`);
+      
+      // Recursively check parent's parent
+      this.autoCompleteParentTask(task.parentTaskId);
+    }
+  }
+
+  /**
    * Move a task to a new parent or change its order
+   * ENFORCES workflow boundary - parent must be in same workflow
    */
   moveTask(taskId: string, options: {
     newParentTaskId?: string | null;
@@ -1139,10 +1418,17 @@ export class TaskOrchestratorService extends BaseService {
       throw new TaskNotFoundError(taskId);
     }
 
-    // Validate new parent exists if provided
+    // Validate new parent exists and is in same workflow
     if (options.newParentTaskId !== undefined && options.newParentTaskId !== null) {
-      if (!this.state.tasks.has(options.newParentTaskId)) {
+      const newParent = this.state.tasks.get(options.newParentTaskId);
+      if (!newParent) {
         throw new TaskNotFoundError(options.newParentTaskId);
+      }
+      if (newParent.workflowId !== task.workflowId) {
+        throw new ThoughtflowError(
+          `Parent task '${options.newParentTaskId}' belongs to workflow '${newParent.workflowId}', cannot move task '${taskId}' to different workflow (current: '${task.workflowId}')`,
+          'WORKFLOW_BOUNDARY_VIOLATION'
+        );
       }
     }
 

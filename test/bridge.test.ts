@@ -22,12 +22,17 @@ describe('CognitiveBridgeService', () => {
     await storageAdapter.initialize();
 
     taskService = new TaskOrchestratorService(storageAdapter);
+    await taskService.load();
+    
     totService = new ToTService(storageAdapter);
+    // Share state from taskService with totService
+    totService.setState(taskService.getState());
+    
     bridgeService = new CognitiveBridgeService(storageAdapter, taskService, totService);
+    // Share state from taskService with bridgeService
+    bridgeService.setState(taskService.getState());
 
     await bridgeService.load();
-    await taskService.load();
-    await totService.load();
   });
 
   after(async () => {
@@ -43,15 +48,30 @@ describe('CognitiveBridgeService', () => {
 
   describe('promoteThoughtToTasks', () => {
     it('should promote a single thought to a task', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy',
+        description: 'Test strategy for promotion'
+      });
+
       const tree = totService.createTree({
         goal: 'Test goal single',
-        rootContent: 'Root thought'
+        rootContent: 'Root thought',
+        strategyId: strategy.id
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow',
+        description: 'Test workflow for promotion',
+        taskIds: [],
+        strategyId: strategy.id
       });
 
       const result = bridgeService.promoteThoughtToTasks({
         treeId: tree.id,
         thoughtId: tree.rootId,
-        includeDescendants: false
+        includeDescendants: false,
+        workflowId: workflow.id
       });
 
       assert.strictEqual(result.taskIds.length, 1);
@@ -61,22 +81,39 @@ describe('CognitiveBridgeService', () => {
       const task = taskService.getTask(result.taskIds[0]);
       assert.ok(task.name.includes('Root thought'));
       assert.strictEqual(task.metadata?.cognitive?.sourceThoughtId, tree.rootId);
+      assert.strictEqual(task.workflowId, workflow.id);
     });
 
     it('should be idempotent - promoting same thought twice returns existing tasks', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Idempotent',
+        description: 'Test strategy for idempotent test'
+      });
+
       const tree = totService.createTree({
         goal: 'Test goal idempotent',
-        rootContent: 'Root thought'
+        rootContent: 'Root thought',
+        strategyId: strategy.id
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow Idempotent',
+        description: 'Test workflow for idempotent test',
+        taskIds: [],
+        strategyId: strategy.id
       });
 
       const result1 = bridgeService.promoteThoughtToTasks({
         treeId: tree.id,
-        thoughtId: tree.rootId
+        thoughtId: tree.rootId,
+        workflowId: workflow.id
       });
 
       const result2 = bridgeService.promoteThoughtToTasks({
         treeId: tree.id,
-        thoughtId: tree.rootId
+        thoughtId: tree.rootId,
+        workflowId: workflow.id
       });
 
       assert.deepStrictEqual(result1.taskIds, result2.taskIds);
@@ -84,9 +121,23 @@ describe('CognitiveBridgeService', () => {
     });
 
     it('should promote subtree with hierarchy preserved', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Subtree',
+        description: 'Test strategy for subtree test'
+      });
+
       const tree = totService.createTree({
         goal: 'Test goal subtree',
-        rootContent: 'Root'
+        rootContent: 'Root',
+        strategyId: strategy.id
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow Subtree',
+        description: 'Test workflow for subtree test',
+        taskIds: [],
+        strategyId: strategy.id
       });
 
       const child1 = totService.addChildThought({
@@ -105,7 +156,8 @@ describe('CognitiveBridgeService', () => {
         treeId: tree.id,
         thoughtId: tree.rootId,
         includeDescendants: true,
-        flattenHierarchy: false
+        flattenHierarchy: false,
+        workflowId: workflow.id
       });
 
       assert.strictEqual(result.taskIds.length, 3);
@@ -114,14 +166,22 @@ describe('CognitiveBridgeService', () => {
     });
 
     it('should attach tasks to workflow if workflowId provided', async () => {
+      // Create strategy for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Attach',
+        description: 'Test strategy for attach test'
+      });
+
       const tree = totService.createTree({
         goal: 'Test goal workflow',
-        rootContent: 'Root'
+        rootContent: 'Root',
+        strategyId: strategy.id
       });
 
       const workflow = taskService.createWorkflow({
         name: 'Test workflow attach',
-        taskIds: []
+        taskIds: [],
+        strategyId: strategy.id
       });
 
       const result = bridgeService.promoteThoughtToTasks({
@@ -136,24 +196,53 @@ describe('CognitiveBridgeService', () => {
     });
 
     it('should throw error for non-existent tree', () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy NonExistent Tree',
+        description: 'Test strategy for non-existent tree test'
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow NonExistent Tree',
+        description: 'Test workflow for non-existent tree test',
+        taskIds: [],
+        strategyId: strategy.id
+      });
+
       assert.throws(() => {
         bridgeService.promoteThoughtToTasks({
           treeId: 'non-existent',
-          thoughtId: 'any'
+          thoughtId: 'any',
+          workflowId: workflow.id
         });
       }, /Tree with ID/);
     });
 
     it('should throw error for non-existent thought', () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy NonExistent Thought',
+        description: 'Test strategy for non-existent thought test'
+      });
+
       const tree = totService.createTree({
         goal: 'Test goal missing thought',
-        rootContent: 'Root'
+        rootContent: 'Root',
+        strategyId: strategy.id
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow NonExistent Thought',
+        description: 'Test workflow for non-existent thought test',
+        taskIds: [],
+        strategyId: strategy.id
       });
 
       assert.throws(() => {
         bridgeService.promoteThoughtToTasks({
           treeId: tree.id,
-          thoughtId: 'non-existent'
+          thoughtId: 'non-existent',
+          workflowId: workflow.id
         });
       }, /Thought/);
     });
@@ -161,9 +250,23 @@ describe('CognitiveBridgeService', () => {
 
   describe('spawnTotFromTask', () => {
     it('should spawn a ToT tree from a task', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Spawn',
+        description: 'Test strategy for spawn test'
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow Spawn',
+        description: 'Test workflow for spawn test',
+        taskIds: [],
+        strategyId: strategy.id
+      });
+
       const task = taskService.createTask({
         name: 'Test task spawn',
-        description: 'Test description'
+        description: 'Test description',
+        workflowId: workflow.id
       });
 
       const result = bridgeService.spawnTotFromTask({
@@ -196,12 +299,29 @@ describe('CognitiveBridgeService', () => {
 
   describe('linkThoughtToTask', () => {
     it('should create bidirectional link between thought and task', async () => {
-      const tree = totService.createTree({
-        goal: 'Test goal link',
-        rootContent: 'Root'
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Link',
+        description: 'Test strategy for link test'
       });
 
-      const task = taskService.createTask({ name: 'Test task link' });
+      const tree = totService.createTree({
+        goal: 'Test goal link',
+        rootContent: 'Root',
+        strategyId: strategy.id
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow Link',
+        description: 'Test workflow for link test',
+        taskIds: [],
+        strategyId: strategy.id
+      });
+
+      const task = taskService.createTask({
+        name: 'Test task link',
+        workflowId: workflow.id
+      });
 
       bridgeService.linkThoughtToTask({
         treeId: tree.id,
@@ -224,7 +344,7 @@ describe('CognitiveBridgeService', () => {
   describe('Strategy workflow management', () => {
     it('should add workflow to strategy', async () => {
       const strategy = taskService.createStrategy({ name: 'Strategy workflow add test' });
-      const workflow = taskService.createWorkflow({ name: 'Workflow for add test', taskIds: [] });
+      const workflow = taskService.createWorkflow({ name: 'Workflow for add test', taskIds: [], strategyId: strategy.id });
 
       taskService.addWorkflowToStrategy(strategy.id, workflow.id);
       const updated = taskService.getStrategy(strategy.id);
@@ -233,7 +353,7 @@ describe('CognitiveBridgeService', () => {
 
     it('should prevent duplicate workflow additions', async () => {
       const strategy = taskService.createStrategy({ name: 'Strategy duplicate workflow test' });
-      const workflow = taskService.createWorkflow({ name: 'Dup workflow', taskIds: [] });
+      const workflow = taskService.createWorkflow({ name: 'Dup workflow', taskIds: [], strategyId: strategy.id });
 
       taskService.addWorkflowToStrategy(strategy.id, workflow.id);
       taskService.addWorkflowToStrategy(strategy.id, workflow.id);
@@ -248,10 +368,16 @@ describe('CognitiveBridgeService', () => {
   // AddIdea test
   describe('addIdea', () => {
     it('should respect max depth', async () => {
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Max Depth',
+        description: 'Test strategy for max depth test'
+      });
+
       const tree = totService.createTree({
         goal: 'Max depth test',
         rootContent: 'Root',
-        maxDepth: 2
+        maxDepth: 2,
+        strategyId: strategy.id
       });
 
       const child1 = totService.addIdea(tree.id, tree.rootId, 'Child 1');
@@ -266,16 +392,31 @@ describe('CognitiveBridgeService', () => {
   // Cognitive suggestions test
   describe('Cognitive Suggestions on Task Completion', () => {
     it('should return cognitive suggestions when task with linked thought is completed', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Cognitive',
+        description: 'Test strategy for cognitive suggestions'
+      });
+
       // Create a tree and thought
       const tree = totService.createTree({
         goal: 'Test cognitive suggestions',
-        rootContent: 'Root thought for testing'
+        rootContent: 'Root thought for testing',
+        strategyId: strategy.id
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow Cognitive',
+        description: 'Test workflow for cognitive suggestions',
+        taskIds: [],
+        strategyId: strategy.id
       });
 
       // Create a task
       const task = taskService.createTask({
         name: 'Test task with linked thought',
-        description: 'Task to test cognitive suggestions'
+        description: 'Task to test cognitive suggestions',
+        workflowId: workflow.id
       });
 
       // Link thought to task
@@ -299,10 +440,24 @@ describe('CognitiveBridgeService', () => {
     });
 
     it('should not return cognitive suggestions when task without linked thought is completed', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy No Suggestions',
+        description: 'Test strategy for no suggestions test'
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow No Suggestions',
+        description: 'Test workflow for no suggestions test',
+        taskIds: [],
+        strategyId: strategy.id
+      });
+
       // Create a task without linked thoughts
       const task = taskService.createTask({
         name: 'Test task without linked thought',
-        description: 'Task to test no cognitive suggestions'
+        description: 'Task to test no cognitive suggestions',
+        workflowId: workflow.id
       });
 
       // Complete the task
@@ -313,21 +468,36 @@ describe('CognitiveBridgeService', () => {
     });
 
     it('should return cognitive suggestions in advanceWorkflowRun for completed tasks with linked thoughts', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Workflow Cognitive',
+        description: 'Test strategy for workflow cognitive suggestions'
+      });
+
       // Create a tree and thought
       const tree = totService.createTree({
         goal: 'Test workflow cognitive suggestions',
-        rootContent: 'Root thought for workflow testing'
+        rootContent: 'Root thought for workflow testing',
+        strategyId: strategy.id
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test workflow for cognitive suggestions',
+        taskIds: [],
+        strategyId: strategy.id
       });
 
       // Create tasks
       const task1 = taskService.createTask({
         name: 'Task 1 with linked thought',
-        description: 'First task'
+        description: 'First task',
+        workflowId: workflow.id
       });
 
       const task2 = taskService.createTask({
         name: 'Task 2 without linked thought',
-        description: 'Second task'
+        description: 'Second task',
+        workflowId: workflow.id
       });
 
       // Link thought to task1
@@ -338,11 +508,8 @@ describe('CognitiveBridgeService', () => {
         reason: 'Testing workflow cognitive suggestions'
       });
 
-      // Create workflow with both tasks
-      const workflow = taskService.createWorkflow({
-        name: 'Test workflow for cognitive suggestions',
-        taskIds: [task1.id, task2.id]
-      });
+      // Add tasks to workflow
+      taskService.addTasksToWorkflow(workflow.id, [task1.id, task2.id]);
 
       // Start workflow execution
       const runResult = taskService.startWorkflowExecution(workflow.id);
@@ -366,19 +533,34 @@ describe('CognitiveBridgeService', () => {
     });
 
     it('should return multiple cognitive suggestions for task with multiple linked thoughts', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Multiple Suggestions',
+        description: 'Test strategy for multiple suggestions'
+      });
+
       // Create a tree with multiple thoughts
       const tree = totService.createTree({
         goal: 'Test multiple cognitive suggestions',
-        rootContent: 'Root thought'
+        rootContent: 'Root thought',
+        strategyId: strategy.id
       });
 
       const child1 = totService.addIdea(tree.id, tree.rootId, 'Child thought 1');
       const child2 = totService.addIdea(tree.id, tree.rootId, 'Child thought 2');
 
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow Multiple Suggestions',
+        description: 'Test workflow for multiple suggestions',
+        taskIds: [],
+        strategyId: strategy.id
+      });
+
       // Create a task
       const task = taskService.createTask({
         name: 'Test task with multiple linked thoughts',
-        description: 'Task to test multiple cognitive suggestions'
+        description: 'Task to test multiple cognitive suggestions',
+        workflowId: workflow.id
       });
 
       // Link multiple thoughts to the task
@@ -415,16 +597,31 @@ describe('CognitiveBridgeService', () => {
     });
 
     it('should not return cognitive suggestions when task status changes to non-completed', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Status Change',
+        description: 'Test strategy for status change test'
+      });
+
       // Create a tree and thought
       const tree = totService.createTree({
         goal: 'Test non-completed status',
-        rootContent: 'Root thought'
+        rootContent: 'Root thought',
+        strategyId: strategy.id
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow Status Change',
+        description: 'Test workflow for status change test',
+        taskIds: [],
+        strategyId: strategy.id
       });
 
       // Create a task
       const task = taskService.createTask({
         name: 'Test task status change',
-        description: 'Task to test status changes'
+        description: 'Task to test status changes',
+        workflowId: workflow.id
       });
 
       // Link thought to task
