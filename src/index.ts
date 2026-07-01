@@ -37,7 +37,7 @@ function createLLMProvider(): ToTServiceConfig {
   const ollamaModel = process.env.OLLAMA_MODEL || 'llama2';
 
   if (providerType === 'null' || providerType === 'none') {
-    logger.info('Using no LLM provider (null)');
+    logger.info('No LLM provider configured. ToTService will use MockLLMProvider as fallback.');
     return { llmProvider: null };
   }
 
