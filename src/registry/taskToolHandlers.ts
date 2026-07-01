@@ -18,9 +18,10 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
           dependencies: { type: 'array', items: { type: 'string' }, description: 'Task dependency IDs' },
           parentTaskId: { type: 'string', description: 'Parent task ID for subtasks' },
           order: { type: 'number', description: 'Order among siblings' },
+          workflowId: { type: 'string', description: 'Workflow ID - task must belong to exactly one workflow' },
           metadata: { type: 'object', description: 'Additional metadata' }
         },
-        required: ['name']
+        required: ['name', 'workflowId']
       }
     },
     handler: (args: any, service: any) => service.createTask(args)
@@ -102,9 +103,10 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
           name: { type: 'string', description: 'Workflow name' },
           description: { type: 'string', description: 'Workflow description' },
           taskIds: { type: 'array', items: { type: 'string' }, description: 'Task IDs in the workflow' },
+          strategyId: { type: 'string', description: 'Strategy ID - workflow must belong to exactly one strategy' },
           metadata: { type: 'object', description: 'Additional metadata' }
         },
-        required: ['name', 'taskIds']
+        required: ['name', 'taskIds', 'strategyId']
       }
     },
     handler: (args: any, service: any) => service.createWorkflow(args)

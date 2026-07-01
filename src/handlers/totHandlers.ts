@@ -12,6 +12,7 @@ export function registerTotHandlers(
 ): void {
   /**
    * Create a new Tree of Thoughts
+   * REQUIRES strategyId - tree must belong to exactly one strategy
    */
   registerTool(
     'create_tree',
@@ -20,6 +21,7 @@ export function registerTotHandlers(
       rootContent: string;
       maxDepth?: number;
       sessionId?: string;
+      strategyId: string; // Mandatory
       metadata?: Record<string, any>;
     }): Promise<Tree> => {
       return totService.createTree(args);

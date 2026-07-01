@@ -20,7 +20,7 @@ export const bridgeToolDefinitions: { name: string; tool: Tool; handler: ToolHan
           taskNamePrefix: { type: 'string', description: 'Prefix for task names' },
           workflowId: { type: 'string', description: 'Assign tasks to existing workflow ID' }
         },
-        required: ['treeId', 'thoughtId']
+        required: ['treeId', 'thoughtId', 'workflowId']
       }
     },
     handler: (args: any, service: any) => service.promoteThoughtToTasks(args)

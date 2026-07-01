@@ -229,12 +229,24 @@ This pattern turns ad-hoc reasoning into auditable, resumable, delegable work.
 
 ## Relationship Model
 
-The system uses a hierarchical relationship model for organizing cognitive work:
+The system uses a **strict hierarchical relationship model** for organizing cognitive work:
 
 ```
-Strategy (Top-Level Organizer)
-├── treeIds: string[]          → Trees of Thoughts (reasoning)
-├── workflowIds: string[]      → Workflows (execution)
+Strategy (Top-Level Organizer - Mandatory Owner)
+├── workflowIds: string[]      → Workflows (each workflow belongs to exactly ONE strategy)
+├── treeIds: string[]          → Trees of Thoughts (reasoning, optional strategy association)
+└── metadata: Record<string, any>
+
+Workflow (Execution Container - Mandatory Owner)
+├── strategyId: string         → Strategy (mandatory, exactly one)
+├── taskIds: string[]          → Tasks (each task belongs to exactly ONE workflow)
+└── metadata: Record<string, any>
+
+Task (Executable Unit - Mandatory Owner)
+├── workflowId: string         → Workflow (mandatory, exactly one)
+├── strategyId: string         → Strategy (denormalized from workflow for convenience)
+├── parentTaskId?: string      → Subtask parent (must be in same workflow)
+├── dependencies: string[]     → Task dependencies (must be in same workflow)
 └── metadata: Record<string, any>
 
 Idea (Thought) ↔ Task (Soft Bidirectional Links)
@@ -244,12 +256,26 @@ Idea (Thought) ↔ Task (Soft Bidirectional Links)
 └── provenanceChain: ProvenanceEntry[]
 ```
 
-### Key Relationships
+### Key Relationships & Invariants
 
-- **Strategy → Trees + Workflows**: Strategies organize related reasoning and execution into cohesive units
+- **Strategy → Workflows**: Strict ownership — each workflow belongs to exactly one strategy
+- **Workflow → Tasks**: Strict ownership — each task belongs to exactly one workflow
+- **Task → Strategy**: Denormalized from workflow for convenience, automatically kept in sync
+- **Subtasks**: Must have parent in the same workflow (enforced by `parentTaskId` validation)
+- **Dependencies**: Must reference tasks in the same workflow (enforced by validation)
 - **Idea ↔ Task**: Soft bidirectional links enable "inspired by" or "related to" relationships without full promotion
-- **Promotion**: Full conversion from thought subtree to executable tasks with provenance tracking
+- **Promotion**: Full conversion from thought subtree to executable tasks with provenance tracking (requires `workflowId`)
 - **Spawning**: Create new reasoning trees from blocked tasks for deeper analysis
+
+### Creation Flow (Strict Hierarchy)
+
+All creation flows must follow the hierarchy:
+
+1. **`create_strategy`** — Create or get strategy (idempotent by normalized name)
+2. **`create_workflow(strategyId)`** — Create workflow with mandatory `strategyId`
+3. **`create_task(workflowId)`** — Create task with mandatory `workflowId` (automatically inherits `strategyId`)
+
+The system enforces these invariants at every operation to prevent data inconsistency.
 
 ---
 

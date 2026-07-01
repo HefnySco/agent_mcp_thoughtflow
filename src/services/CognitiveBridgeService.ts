@@ -12,7 +12,8 @@ import type { IStorageAdapter, CognitiveLink } from '../storage/IStorageAdapter.
 import {
   TreeNotFoundError,
   ThoughtNotFoundError,
-  TaskNotFoundError
+  TaskNotFoundError,
+  ThoughtflowError
 } from '../types/index.js';
 import { BaseService } from './BaseService.js';
 import { TaskOrchestratorService } from './TaskOrchestratorService.js';
@@ -51,10 +52,12 @@ export class CognitiveBridgeService extends BaseService {
   /**
    * Promote a thought (or subtree) to executable tasks
    * This is the primary bridge tool for converting reasoning into action
+   * REQUIRES workflowId - tasks must belong to exactly one workflow
    */
   promoteThoughtToTasks(params: PromoteThoughtToTasksParams): PromoteThoughtToTasksResult {
     validateRequiredString(params.treeId, 'treeId');
     validateRequiredString(params.thoughtId, 'thoughtId');
+    validateRequiredString(params.workflowId, 'workflowId');
     
     const tree = this.totService.getTreeFull(params.treeId);
     if (!tree) {
@@ -66,10 +69,10 @@ export class CognitiveBridgeService extends BaseService {
       throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
     }
     
-    // Check if already promoted (idempotency)
+    // Check if already promoted to this workflow (idempotency)
     const cognitiveMeta = thought.metadata?.cognitive as CognitiveMetadata;
-    if (cognitiveMeta?.promotedToTaskIds && cognitiveMeta.promotedToTaskIds.length > 0) {
-      logger.info(`Thought ${params.thoughtId} already promoted to tasks`);
+    if (cognitiveMeta?.promotedToTaskIds && cognitiveMeta.promotedToTaskIds.length > 0 && cognitiveMeta.workflowId === params.workflowId) {
+      logger.info(`Thought ${params.thoughtId} already promoted to tasks in workflow ${params.workflowId}`);
       return {
         taskIds: cognitiveMeta.promotedToTaskIds,
         workflowId: cognitiveMeta.workflowId,
@@ -94,7 +97,7 @@ export class CognitiveBridgeService extends BaseService {
     
     const now = new Date().toISOString();
     
-    // Create tasks for each thought using taskService
+    // Create tasks for each thought using taskService (requires workflowId)
     for (const thoughtToPromote of thoughtsToPromote) {
       const taskName = `${taskNamePrefix}${thoughtToPromote.content}`;
       
@@ -102,6 +105,7 @@ export class CognitiveBridgeService extends BaseService {
         name: taskName,
         description: thoughtToPromote.content,
         dependencies: [],
+        workflowId: params.workflowId, // Mandatory
         metadata: {
           cognitive: {
             sourceThoughtId: thoughtToPromote.id,
@@ -122,6 +126,7 @@ export class CognitiveBridgeService extends BaseService {
       thoughtCognitive.promotedToTaskIds = thoughtCognitive.promotedToTaskIds || [];
       this.addUniqueIdToArray(thoughtCognitive.promotedToTaskIds, newTask.id);
       thoughtCognitive.promotedAt = now;
+      thoughtCognitive.workflowId = params.workflowId;
       
       // Add provenance entry
       thoughtCognitive.provenanceChain = thoughtCognitive.provenanceChain || [];
@@ -145,24 +150,11 @@ export class CognitiveBridgeService extends BaseService {
       });
     }
     
-    // If workflowId provided, attach tasks to workflow
-    if (params.workflowId) {
-      this.taskService.addTasksToWorkflow(params.workflowId, taskIds);
-      
-      // Update all thoughts with workflowId
-      for (const thoughtToPromote of thoughtsToPromote) {
-        const meta = thoughtToPromote.metadata?.cognitive as CognitiveMetadata;
-        if (meta) {
-          meta.workflowId = params.workflowId;
-        }
-      }
-    }
-    
     // Update tree timestamp
     tree.updatedAt = now;
     this.triggerSave();
     
-    logger.info(`Promoted ${thoughtsToPromote.length} thoughts to ${taskIds.length} tasks`);
+    logger.info(`Promoted ${thoughtsToPromote.length} thoughts to ${taskIds.length} tasks in workflow ${params.workflowId}`);
     
     return {
       taskIds,
@@ -185,14 +177,19 @@ export class CognitiveBridgeService extends BaseService {
     if (!task) {
       throw new TaskNotFoundError(params.taskId);
     }
-    
+
+    if (!task.strategyId) {
+      throw new ThoughtflowError(`Task '${params.taskId}' does not have a strategyId. Cannot spawn tree without strategy context.`, 'TASK_NO_STRATEGY');
+    }
+
     const now = new Date().toISOString();
-    
-    // Create tree using totService
+
+    // Create tree using totService with strategyId from task
     const tree = this.totService.createTree({
       goal: params.goal,
       rootContent: params.rootContent,
       maxDepth: params.maxDepth,
+      strategyId: task.strategyId, // Use task's denormalized strategyId
       metadata: {
         sourceTaskId: params.taskId,
         spawnedAt: now

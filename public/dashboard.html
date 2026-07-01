@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Thoughtflow Dashboard</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -45,7 +46,7 @@
     <header class="flex justify-between items-center mb-8">
       <div>
         <h1 class="text-3xl font-bold text-white">Thoughtflow Dashboard</h1>
-        <p class="text-gray-400 mt-1">Unified cognitive scaffold monitoring</p>
+        <p class="text-gray-400 mt-1">Strict hierarchy: Strategy → Workflow → Task</p>
       </div>
       <div class="flex items-center gap-4">
         <div id="change-indicator" class="hidden flex items-center gap-2">
@@ -115,7 +116,7 @@
 
     <!-- Strategies Panel (Full Width) -->
     <div class="card rounded-lg p-6 mb-8">
-      <h2 class="text-xl font-bold text-white mb-4">Strategies</h2>
+      <h2 class="text-xl font-bold text-white mb-4 "><i class="fas fa-layer-group"></i> Strategies</h2>
       <div id="strategies-list" class="space-y-3">
         <p class="text-gray-500 text-sm">Loading strategies...</p>
       </div>
@@ -123,7 +124,7 @@
 
     <!-- Tasks Panel (Full Width) -->
     <div class="card rounded-lg p-6 mb-8">
-      <h2 class="text-xl font-bold text-white mb-4">Tasks</h2>
+      <h2 class="text-xl font-bold text-white mb-4"><i class="fas fa-list-check"></i> Tasks</h2>
       <div class="grid grid-cols-5 gap-4 mb-4">
         <div class="text-center">
           <p class="text-2xl font-bold status-pending" id="tasks-pending">0</p>
@@ -142,7 +143,7 @@
           <p class="text-xs text-gray-400">Failed</p>
         </div>
         <div class="text-center">
-          <p class="text-2xl font-bold text-red-400" id="tasks-deleted">0</p>
+          <p class="text-2xl font-bold text-grey-400" id="tasks-deleted">0</p>
           <p class="text-xs text-gray-400">Deleted</p>
         </div>
       </div>
@@ -153,7 +154,7 @@
 
     <!-- Trees Panel -->
     <div class="card rounded-lg p-6 mb-8">
-      <h2 class="text-xl font-bold text-white mb-4">Trees / Ideas</h2>
+      <h2 class="text-xl font-bold text-white mb-4"><i class="fa fa-lightbulb"></i> Trees / Ideas</h2>
       <div id="trees-list" class="space-y-3">
         <p class="text-gray-500 text-sm">Loading trees...</p>
       </div>
@@ -161,7 +162,7 @@
 
     <!-- Workflows Panel -->
     <div class="card rounded-lg p-6 mb-8">
-      <h2 class="text-xl font-bold text-white mb-4">Workflows</h2>
+      <h2 class="text-xl font-bold text-white mb-4"><i class="fa fa-cogs" ></i> Workflows</h2>
       <div id="workflows-list" class="space-y-3">
         <p class="text-gray-500 text-sm">Loading workflows...</p>
       </div>
@@ -169,7 +170,7 @@
 
     <!-- Cognitive Links Panel -->
     <div class="card rounded-lg p-6 mb-8">
-      <h2 class="text-xl font-bold text-white mb-4">Cognitive Links & Provenance</h2>
+      <h2 class="text-xl font-bold text-white mb-4"><i class="fas fa-link"></i> Cognitive Links & Provenance</h2>
       <div class="grid grid-cols-3 gap-4 mb-4">
         <div class="text-center">
           <p class="text-2xl font-bold text-blue-400" id="links-thought-to-task">0</p>
@@ -191,7 +192,7 @@
 
     <!-- Recent Promoted Tasks Panel -->
     <div class="card rounded-lg p-6 mb-8">
-      <h2 class="text-xl font-bold text-white mb-4">Recent Promoted Tasks</h2>
+      <h2 class="text-xl font-bold text-white mb-4"><i class="fa fa-bolt"></i> Recent Promoted Tasks</h2>
       <div id="promoted-list" class="space-y-3 max-h-64 overflow-y-auto">
         <p class="text-gray-500 text-sm">Loading promoted tasks...</p>
       </div>

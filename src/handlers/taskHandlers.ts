@@ -12,6 +12,7 @@ export function registerTaskHandlers(
 ): void {
   /**
    * Create a new task
+   * REQUIRES workflowId - task must belong to exactly one workflow
    */
   registerTool(
     'create_task',
@@ -20,6 +21,7 @@ export function registerTaskHandlers(
       description?: string;
       dependencies?: string[];
       parentTaskId?: string;
+      workflowId: string; // Mandatory
       metadata?: Record<string, any>;
     }): Promise<Task> => {
       return taskService.createTask(args);
@@ -80,6 +82,7 @@ export function registerTaskHandlers(
 
   /**
    * Create a workflow
+   * REQUIRES strategyId - workflow must belong to exactly one strategy
    */
   registerTool(
     'create_workflow',
@@ -87,6 +90,7 @@ export function registerTaskHandlers(
       name: string;
       description?: string;
       taskIds: string[];
+      strategyId: string; // Mandatory
       metadata?: Record<string, any>;
     }): Promise<Workflow> => {
       return taskService.createWorkflow(args);

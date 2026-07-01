@@ -17,9 +17,10 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
           rootContent: { type: 'string', description: 'The content of the root thought' },
           maxDepth: { type: 'number', description: 'Maximum depth of the tree (default: 10)' },
           sessionId: { type: 'string', description: 'Optional session ID for context maintenance' },
+          strategyId: { type: 'string', description: 'Strategy ID - tree must belong to exactly one strategy' },
           metadata: { type: 'object', description: 'Additional metadata' }
         },
-        required: ['goal', 'rootContent']
+        required: ['goal', 'rootContent', 'strategyId']
       }
     },
     handler: (args: any, service: any) => service.createTree(args)

@@ -89,7 +89,8 @@ export interface Task {
   completedAt?: string;
   failedAt?: string;
   errorMessage?: string;
-  strategyId?: string;
+  workflowId: string; // Mandatory: task belongs to exactly one workflow
+  strategyId?: string; // Denormalized from workflow for convenience
   metadata?: Record<string, any>;
   isDeleted?: boolean;
   deletedAt?: string | null;
@@ -105,7 +106,7 @@ export interface Workflow {
   updatedAt: string;
   startedAt?: string;
   completedAt?: string;
-  strategyId?: string;
+  strategyId: string; // Mandatory: workflow belongs to exactly one strategy
   metadata?: Record<string, any>;
   isDeleted?: boolean;
   deletedAt?: string | null;
@@ -183,7 +184,7 @@ export interface Tree {
   createdAt: string;
   updatedAt: string;
   maxDepth: number;
-  strategyId?: string;
+  strategyId: string; // Mandatory: tree belongs to exactly one strategy
   metadata?: Record<string, any>;
   usageStats?: UsageStats;
   isDeleted?: boolean;
@@ -199,7 +200,7 @@ export interface PromoteThoughtToTasksParams {
   thoughtId: string;
   includeDescendants?: boolean;
   flattenHierarchy?: boolean;
-  workflowId?: string;
+  workflowId: string; // Mandatory: tasks must belong to exactly one workflow
   taskNamePrefix?: string;
 }
 
