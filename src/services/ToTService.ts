@@ -14,6 +14,7 @@ import {
 import { BaseService } from './BaseService.js';
 import { logger } from '../utils/logger.js';
 import { validateRequiredString, validateId, validateEvaluationScore } from '../utils/validators.js';
+import { MockLLMProvider } from '../llm-providers/mock-llm-provider.js';
 
 /**
  * LLM instruction for Strategy usage
@@ -49,6 +50,12 @@ export class ToTService extends BaseService {
     this.llmProvider = config?.llmProvider;
     this.strictLLM = config?.strictLLM ?? false;
     this.cognitiveBridgeService = config?.cognitiveBridgeService;
+    
+    // Ensure fallback MockLLMProvider is always available if none is passed
+    if (!this.llmProvider) {
+      this.llmProvider = new MockLLMProvider();
+      logger.info('No LLM provider configured. Using MockLLMProvider as fallback.');
+    }
   }
 
   /**
@@ -709,8 +716,15 @@ export class ToTService extends BaseService {
     validateRequiredString(params.treeId, 'treeId');
     validateRequiredString(params.parentId, 'parentId');
     
-    if (!this.llmProvider) {
-      throw new ThoughtflowError('LLM provider not configured', 'LLM_NOT_CONFIGURED');
+    // Check for LLM provider and fallback to MockLLMProvider if needed
+    let provider = this.llmProvider;
+    if (!provider) {
+      if (this.strictLLM) {
+        throw new ThoughtflowError('LLM provider not configured', 'LLM_NOT_CONFIGURED');
+      }
+      logger.info('No LLM provider configured. Falling back to MockLLMProvider for thought generation.');
+      provider = new MockLLMProvider();
+      this.llmProvider = provider;
     }
 
     const tree = this.getTreeFull(params.treeId);
@@ -727,7 +741,7 @@ export class ToTService extends BaseService {
     const context = `Goal: ${tree.goal}\nParent thought: ${parentThought.content}\nDepth: ${parentThought.depth}`;
 
     // Generate thoughts using LLM
-    const generatedContents = await this.llmProvider.generateThoughts(
+    const generatedContents = await provider.generateThoughts(
       context,
       numChildren,
       undefined,
@@ -761,8 +775,15 @@ export class ToTService extends BaseService {
     validateRequiredString(params.treeId, 'treeId');
     validateRequiredString(params.thoughtId, 'thoughtId');
     
-    if (!this.llmProvider || !this.llmProvider.evaluateThoughtStructured) {
-      throw new ThoughtflowError('LLM provider does not support structured evaluation', 'LLM_NOT_SUPPORTED');
+    // Check for LLM provider and fallback to MockLLMProvider if needed
+    let provider = this.llmProvider;
+    if (!provider || !provider.evaluateThoughtStructured) {
+      if (this.strictLLM) {
+        throw new ThoughtflowError('LLM provider does not support structured evaluation', 'LLM_NOT_SUPPORTED');
+      }
+      logger.info('No LLM provider configured. Falling back to MockLLMProvider for thought evaluation.');
+      provider = new MockLLMProvider();
+      this.llmProvider = provider;
     }
 
     const tree = this.getTreeFull(params.treeId);
@@ -775,8 +796,8 @@ export class ToTService extends BaseService {
     // Build context for evaluation
     const context = `Goal: ${tree.goal}\nThought: ${thought.content}`;
 
-    // Get structured evaluation from LLM
-    const evaluation = await this.llmProvider.evaluateThoughtStructured(
+    // Get structured evaluation from LLM (provider is guaranteed to have method after check)
+    const evaluation = await provider.evaluateThoughtStructured!(
       thought.content,
       tree.goal,
       context
@@ -823,8 +844,15 @@ export class ToTService extends BaseService {
     validateRequiredString(params.treeId, 'treeId');
     validateRequiredString(params.thoughtId, 'thoughtId');
     
-    if (!this.llmProvider || !this.llmProvider.refineThought) {
-      throw new ThoughtflowError('LLM provider does not support thought refinement', 'LLM_NOT_SUPPORTED');
+    // Check for LLM provider and fallback to MockLLMProvider if needed
+    let provider = this.llmProvider;
+    if (!provider || !provider.refineThought) {
+      if (this.strictLLM) {
+        throw new ThoughtflowError('LLM provider does not support thought refinement', 'LLM_NOT_SUPPORTED');
+      }
+      logger.info('No LLM provider configured. Falling back to MockLLMProvider for thought refinement.');
+      provider = new MockLLMProvider();
+      this.llmProvider = provider;
     }
 
     const tree = this.getTreeFull(params.treeId);
@@ -836,8 +864,8 @@ export class ToTService extends BaseService {
 
     const goal = params.goal || tree.goal;
 
-    // Refine thought using LLM
-    const refinedContent = await this.llmProvider.refineThought(
+    // Refine thought using LLM (provider is guaranteed to have method after check)
+    const refinedContent = await provider.refineThought!(
       thought.content,
       goal
     );
@@ -871,8 +899,15 @@ export class ToTService extends BaseService {
   }): Promise<Thought> {
     validateRequiredString(params.treeId, 'treeId');
     
-    if (!this.llmProvider || !this.llmProvider.synthesizeThoughts) {
-      throw new ThoughtflowError('LLM provider does not support thought synthesis', 'LLM_NOT_SUPPORTED');
+    // Check for LLM provider and fallback to MockLLMProvider if needed
+    let provider = this.llmProvider;
+    if (!provider || !provider.synthesizeThoughts) {
+      if (this.strictLLM) {
+        throw new ThoughtflowError('LLM provider does not support thought synthesis', 'LLM_NOT_SUPPORTED');
+      }
+      logger.info('No LLM provider configured. Falling back to MockLLMProvider for thought synthesis.');
+      provider = new MockLLMProvider();
+      this.llmProvider = provider;
     }
 
     const tree = this.getTreeFull(params.treeId);
@@ -895,8 +930,8 @@ export class ToTService extends BaseService {
     // Use provided newParentId or common parent
     const finalParentId = params.newParentId || parentId;
 
-    // Synthesize thoughts using LLM
-    const synthesizedContent = await this.llmProvider.synthesizeThoughts(
+    // Synthesize thoughts using LLM (provider is guaranteed to have method after check)
+    const synthesizedContent = await provider.synthesizeThoughts!(
       thoughtsToSynthesize,
       tree.goal
     );
