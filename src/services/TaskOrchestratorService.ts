@@ -20,8 +20,8 @@ import { validateRequiredString, validateId } from '../utils/validators.js';
 const STRATEGY_LLM_INSTRUCTION = `Strategy Usage Rules:
 - One Strategy = one cohesive goal/project area.
 - Use create_strategy as get-or-create (idempotent by normalized name).
-- Add Trees for divergent reasoning/exploration.
-- Add Workflows for convergent execution with tasks.
+- Add Trees for divergent reasoning/exploration. Create or use an existing Tree before adding ideas.
+- Add Workflows for convergent execution with tasks. Create or use an existing workflow before creating tasks.
 - Promote promising thoughts to tasks. If a task blocks, spawn new Tree from it.
 - Maintain strict isolation: do not mix tasks or workflows across different Strategies.
 - Use Cognitive Bridge for provenance (link/promote/spawn).`;
