@@ -33,12 +33,13 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
       inputSchema: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: 'Task ID' }
+          id: { type: 'string', description: 'Task ID' },
+          includeDeleted: { type: 'boolean', description: 'Include soft-deleted tasks' }
         },
         required: ['id']
       }
     },
-    handler: (args: any, service: any) => service.getTask(args.id)
+    handler: (args: any, service: any) => service.getTask(args.id, args.includeDeleted)
   },
   {
     name: 'list_tasks',
@@ -48,11 +49,12 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
       inputSchema: {
         type: 'object',
         properties: {
-          status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'failed'], description: 'Filter by status' }
+          status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'failed'], description: 'Filter by status' },
+          includeDeleted: { type: 'boolean', description: 'Include soft-deleted tasks' }
         }
       }
     },
-    handler: (args: any, service: any) => service.listTasks(args.status)
+    handler: (args: any, service: any) => service.listTasks(args.status, args.includeDeleted)
   },
   {
     name: 'update_task',
@@ -78,7 +80,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'delete_task',
     tool: {
       name: 'delete_task',
-      description: 'Delete a task',
+      description: 'Soft-delete a task (marks as deleted, preserves for recovery)',
       inputSchema: {
         type: 'object',
         properties: {
@@ -93,7 +95,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'create_workflow',
     tool: {
       name: 'create_workflow',
-      description: 'Create a workflow with a set of tasks',
+      description: 'Create a workflow with a set of tasks. Remember to call start_workflow_execution to begin processing.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -115,12 +117,13 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
       inputSchema: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: 'Workflow ID' }
+          id: { type: 'string', description: 'Workflow ID' },
+          includeDeleted: { type: 'boolean', description: 'Include soft-deleted workflows' }
         },
         required: ['id']
       }
     },
-    handler: (args: any, service: any) => service.getWorkflow(args.id)
+    handler: (args: any, service: any) => service.getWorkflow(args.id, args.includeDeleted)
   },
   {
     name: 'list_workflows',
@@ -129,16 +132,18 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
       description: 'List all workflows',
       inputSchema: {
         type: 'object',
-        properties: {}
+        properties: {
+          includeDeleted: { type: 'boolean', description: 'Include soft-deleted workflows' }
+        }
       }
     },
-    handler: (_args: any, service: any) => service.listWorkflows()
+    handler: (args: any, service: any) => service.listWorkflows(args.includeDeleted)
   },
   {
     name: 'delete_workflow',
     tool: {
       name: 'delete_workflow',
-      description: 'Delete a workflow',
+      description: 'Soft-delete a workflow (marks as deleted, preserves for recovery)',
       inputSchema: {
         type: 'object',
         properties: {
@@ -192,6 +197,21 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
       }
     },
     handler: (_args: any, service: any) => service.getAllStrategies()
+  },
+  {
+    name: 'delete_strategy',
+    tool: {
+      name: 'delete_strategy',
+      description: 'Soft-delete a strategy (marks as deleted, preserves for recovery)',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Strategy ID' }
+        },
+        required: ['id']
+      }
+    },
+    handler: (args: any, service: any) => service.deleteStrategy(args.id)
   },
   {
     name: 'add_tree_to_strategy',
@@ -276,7 +296,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'start_workflow_execution',
     tool: {
       name: 'start_workflow_execution',
-      description: 'Start execution of a workflow',
+      description: 'Start execution of a workflow. IMPORTANT: You must manually execute the ready tasks, update their status to completed, and call advance_workflow_run to progress.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -291,7 +311,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'advance_workflow_run',
     tool: {
       name: 'advance_workflow_run',
-      description: 'Advance a workflow run after task completion',
+      description: 'Advance a workflow run. Call this AFTER you have updated ready tasks to completed. Returns the next batch of ready tasks.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -388,5 +408,84 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
       }
     },
     handler: (_args: any, service: any) => Promise.resolve({ removed: service.deduplicateStrategies() })
+  },
+  {
+    name: 'add_task_to_workflow',
+    tool: {
+      name: 'add_task_to_workflow',
+      description: 'Add a task to a workflow at a specific position. position: -1 = end (default), 0 = beginning, or specific index.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workflowId: { type: 'string', description: 'Workflow ID' },
+          taskId: { type: 'string', description: 'Task ID to add' },
+          position: { type: 'number', description: 'Position to insert at (-1 for end, 0 for beginning, or specific index)' }
+        },
+        required: ['workflowId', 'taskId']
+      }
+    },
+    handler: (args: any, service: any) => service.addTaskToWorkflow(args.workflowId, args.taskId, args.position)
+  },
+  {
+    name: 'remove_task_from_workflow',
+    tool: {
+      name: 'remove_task_from_workflow',
+      description: 'Remove a task from a workflow',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workflowId: { type: 'string', description: 'Workflow ID' },
+          taskId: { type: 'string', description: 'Task ID to remove' }
+        },
+        required: ['workflowId', 'taskId']
+      }
+    },
+    handler: (args: any, service: any) => service.removeTaskFromWorkflow(args.workflowId, args.taskId)
+  },
+  {
+    name: 'purge_deleted',
+    tool: {
+      name: 'purge_deleted',
+      description: 'Permanently delete (hard purge) soft-deleted items. Use with caution - this cannot be undone.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          entityType: { 
+            type: 'string', 
+            description: 'Entity type to purge: "task", "workflow", "tree", "strategy", "link", "workflow_run", or "all" (default)',
+            enum: ['task', 'workflow', 'tree', 'strategy', 'link', 'workflow_run', 'all']
+          },
+          olderThanDays: { 
+            type: 'number', 
+            description: 'Only purge items deleted more than this many days ago. If not specified, purges all soft-deleted items.' 
+          }
+        },
+        required: []
+      }
+    },
+    handler: (args: any, service: any) => service.purgeDeleted(args.entityType, args.olderThanDays)
+  },
+  {
+    name: 'restore_deleted',
+    tool: {
+      name: 'restore_deleted',
+      description: 'Restore a soft-deleted entity back to active state',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          entityType: { 
+            type: 'string', 
+            description: 'Entity type to restore',
+            enum: ['task', 'workflow', 'tree', 'strategy', 'link']
+          },
+          id: { 
+            type: 'string', 
+            description: 'Entity ID to restore' 
+          }
+        },
+        required: ['entityType', 'id']
+      }
+    },
+    handler: (args: any, service: any) => Promise.resolve({ restored: service.restoreDeleted(args.entityType, args.id) })
   }
 ];

@@ -262,4 +262,184 @@ describe('CognitiveBridgeService', () => {
       }, /Maximum depth/);
     });
   });
+
+  // Cognitive suggestions test
+  describe('Cognitive Suggestions on Task Completion', () => {
+    it('should return cognitive suggestions when task with linked thought is completed', async () => {
+      // Create a tree and thought
+      const tree = totService.createTree({
+        goal: 'Test cognitive suggestions',
+        rootContent: 'Root thought for testing'
+      });
+
+      // Create a task
+      const task = taskService.createTask({
+        name: 'Test task with linked thought',
+        description: 'Task to test cognitive suggestions'
+      });
+
+      // Link thought to task
+      bridgeService.linkThoughtToTask({
+        treeId: tree.id,
+        thoughtId: tree.rootId,
+        taskId: task.id,
+        reason: 'Testing cognitive suggestions'
+      });
+
+      // Complete the task
+      const result = taskService.updateTask(task.id, { status: 'completed' });
+
+      // Verify cognitive suggestions are returned
+      assert.ok(result.cognitiveSuggestions);
+      assert.strictEqual(result.cognitiveSuggestions!.length, 1);
+      assert.strictEqual(result.cognitiveSuggestions![0].type, 'verify_thought');
+      assert.strictEqual(result.cognitiveSuggestions![0].thoughtId, tree.rootId);
+      assert.ok(result.cognitiveSuggestions![0].reason.includes('completed'));
+      assert.ok(result.cognitiveSuggestions![0].reason.includes(task.name));
+    });
+
+    it('should not return cognitive suggestions when task without linked thought is completed', async () => {
+      // Create a task without linked thoughts
+      const task = taskService.createTask({
+        name: 'Test task without linked thought',
+        description: 'Task to test no cognitive suggestions'
+      });
+
+      // Complete the task
+      const result = taskService.updateTask(task.id, { status: 'completed' });
+
+      // Verify no cognitive suggestions are returned
+      assert.ok(!result.cognitiveSuggestions || result.cognitiveSuggestions.length === 0);
+    });
+
+    it('should return cognitive suggestions in advanceWorkflowRun for completed tasks with linked thoughts', async () => {
+      // Create a tree and thought
+      const tree = totService.createTree({
+        goal: 'Test workflow cognitive suggestions',
+        rootContent: 'Root thought for workflow testing'
+      });
+
+      // Create tasks
+      const task1 = taskService.createTask({
+        name: 'Task 1 with linked thought',
+        description: 'First task'
+      });
+
+      const task2 = taskService.createTask({
+        name: 'Task 2 without linked thought',
+        description: 'Second task'
+      });
+
+      // Link thought to task1
+      bridgeService.linkThoughtToTask({
+        treeId: tree.id,
+        thoughtId: tree.rootId,
+        taskId: task1.id,
+        reason: 'Testing workflow cognitive suggestions'
+      });
+
+      // Create workflow with both tasks
+      const workflow = taskService.createWorkflow({
+        name: 'Test workflow for cognitive suggestions',
+        taskIds: [task1.id, task2.id]
+      });
+
+      // Start workflow execution
+      const runResult = taskService.startWorkflowExecution(workflow.id);
+      assert.ok(runResult.runId);
+
+      // Complete task1 (has linked thought)
+      taskService.updateTask(task1.id, { status: 'completed' });
+
+      // Complete task2 (no linked thought)
+      taskService.updateTask(task2.id, { status: 'completed' });
+
+      // Advance workflow run
+      const advanceResult = taskService.advanceWorkflowRun(runResult.runId);
+
+      // Verify cognitive suggestions are returned for task1
+      assert.ok(advanceResult.cognitiveSuggestions);
+      assert.strictEqual(advanceResult.cognitiveSuggestions!.length, 1);
+      assert.strictEqual(advanceResult.cognitiveSuggestions![0].type, 'verify_thought');
+      assert.strictEqual(advanceResult.cognitiveSuggestions![0].thoughtId, tree.rootId);
+      assert.ok(advanceResult.cognitiveSuggestions![0].reason.includes('workflow'));
+    });
+
+    it('should return multiple cognitive suggestions for task with multiple linked thoughts', async () => {
+      // Create a tree with multiple thoughts
+      const tree = totService.createTree({
+        goal: 'Test multiple cognitive suggestions',
+        rootContent: 'Root thought'
+      });
+
+      const child1 = totService.addIdea(tree.id, tree.rootId, 'Child thought 1');
+      const child2 = totService.addIdea(tree.id, tree.rootId, 'Child thought 2');
+
+      // Create a task
+      const task = taskService.createTask({
+        name: 'Test task with multiple linked thoughts',
+        description: 'Task to test multiple cognitive suggestions'
+      });
+
+      // Link multiple thoughts to the task
+      bridgeService.linkThoughtToTask({
+        treeId: tree.id,
+        thoughtId: tree.rootId,
+        taskId: task.id,
+        reason: 'First link'
+      });
+
+      bridgeService.linkThoughtToTask({
+        treeId: tree.id,
+        thoughtId: child1.id,
+        taskId: task.id,
+        reason: 'Second link'
+      });
+
+      bridgeService.linkThoughtToTask({
+        treeId: tree.id,
+        thoughtId: child2.id,
+        taskId: task.id,
+        reason: 'Third link'
+      });
+
+      // Complete the task
+      const result = taskService.updateTask(task.id, { status: 'completed' });
+
+      // Verify multiple cognitive suggestions are returned
+      assert.ok(result.cognitiveSuggestions);
+      assert.strictEqual(result.cognitiveSuggestions!.length, 3);
+      assert.strictEqual(result.cognitiveSuggestions![0].type, 'verify_thought');
+      assert.strictEqual(result.cognitiveSuggestions![1].type, 'verify_thought');
+      assert.strictEqual(result.cognitiveSuggestions![2].type, 'verify_thought');
+    });
+
+    it('should not return cognitive suggestions when task status changes to non-completed', async () => {
+      // Create a tree and thought
+      const tree = totService.createTree({
+        goal: 'Test non-completed status',
+        rootContent: 'Root thought'
+      });
+
+      // Create a task
+      const task = taskService.createTask({
+        name: 'Test task status change',
+        description: 'Task to test status changes'
+      });
+
+      // Link thought to task
+      bridgeService.linkThoughtToTask({
+        treeId: tree.id,
+        thoughtId: tree.rootId,
+        taskId: task.id,
+        reason: 'Testing status changes'
+      });
+
+      // Change task status to in_progress (not completed)
+      const result = taskService.updateTask(task.id, { status: 'in_progress' });
+
+      // Verify no cognitive suggestions are returned
+      assert.ok(!result.cognitiveSuggestions || result.cognitiveSuggestions.length === 0);
+    });
+  });
 });

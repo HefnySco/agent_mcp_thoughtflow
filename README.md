@@ -166,6 +166,7 @@ spawn_tot_from_task({
 | Execution | `start_workflow_execution`, `advance_workflow_run`, `getReadyTasks` |
 | Hierarchy | `get_subtasks`, `move_task` |
 | Strategies | `create_strategy`, `get_strategy`, `list_strategies`, `add_tree_to_strategy`, `remove_tree_from_strategy` |
+| Soft-Delete | `purge_deleted`, `restore_deleted` |
 
 ### Tree of Thoughts Tools
 
@@ -174,6 +175,32 @@ spawn_tot_from_task({
 | Trees | `create_tree`, `get_tree`, `list_trees`, `delete_tree` |
 | Thoughts | `add_idea`, `get_thought`, `evaluate_thought`, `verify_thought`, `select_thought`, `backtrack`, `prune_tree` |
 | Strategies | `create_strategy`, `get_strategy`, `list_strategies`, `add_workflow_to_strategy`, `remove_workflow_from_strategy` |
+
+### Soft-Delete & Recovery
+
+All delete operations use **soft-delete** by default — entities are marked as deleted but preserved for recovery.
+
+- **`includeDeleted` parameter**: All `get_*` and `list_*` tools support an optional `includeDeleted: true` parameter to view soft-deleted items.
+- **`restore_deleted`**: Restore a soft-deleted entity back to active state. Requires `entityType` ('task', 'workflow', 'tree', 'strategy', 'link') and `id`.
+- **`purge_deleted`**: Permanently remove soft-deleted items (cannot be undone). Supports filtering by `entityType` and `olderThanDays` for safe cleanup.
+
+Example workflow:
+```json
+// 1. Delete a task
+delete_task({ "id": "task-123" })
+
+// 2. List active tasks (deleted task hidden)
+list_tasks() // → task-123 not visible
+
+// 3. List with deleted included
+list_tasks({ "includeDeleted": true }) // → task-123 visible with isDeleted flag
+
+// 4. Restore if needed
+restore_deleted({ "entityType": "task", "id": "task-123" })
+
+// 5. Permanently purge old deleted items (e.g., older than 30 days)
+purge_deleted({ "entityType": "task", "olderThanDays": 30 })
+```
 
 ### Visualization Tools
 

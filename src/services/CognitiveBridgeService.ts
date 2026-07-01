@@ -96,7 +96,7 @@ export class CognitiveBridgeService extends BaseService {
     
     // Create tasks for each thought using taskService
     for (const thoughtToPromote of thoughtsToPromote) {
-      const taskName = `${taskNamePrefix}${thoughtToPromote.content.substring(0, 50)}${thoughtToPromote.content.length > 50 ? '...' : ''}`;
+      const taskName = `${taskNamePrefix}${thoughtToPromote.content}`;
       
       const newTask = this.taskService.createTask({
         name: taskName,
@@ -335,7 +335,7 @@ export class CognitiveBridgeService extends BaseService {
    * Get cognitive provenance for a thought or task
    * Traces the full reasoning → execution chain including promotion/spawn events
    */
-  getCognitiveProvenance(id: string, type: 'thought' | 'task', maxDepth: number = 5): any {
+  getCognitiveProvenance(id: string, type: 'thought' | 'task', maxDepth: number = 5, includeDeleted: boolean = false): any {
     validateId(id, type === 'thought' ? 'Thought' : 'Task');
     
     const visited = new Set<string>();
@@ -349,26 +349,36 @@ export class CognitiveBridgeService extends BaseService {
     };
     
     if (type === 'thought') {
-      const tree = this.totService.getAllTrees().find(t => t.thoughts.has(id));
+      const tree = this.totService.getAllTrees(includeDeleted).find(t => t.thoughts.has(id));
       if (tree) {
-        result.data = tree.thoughts.get(id);
+        const thought = tree.thoughts.get(id);
+        if (thought && (!this.isDeleted(thought) || includeDeleted)) {
+          result.data = thought;
+          result.cognitiveMetadata = result.data?.metadata?.cognitive;
+          // Include provenance chain from metadata
+          if (result.cognitiveMetadata?.provenanceChain) {
+            result.provenanceChain = result.cognitiveMetadata.provenanceChain;
+          }
+        }
+      }
+    } else {
+      try {
+        result.data = this.taskService.getTask(id, includeDeleted);
         result.cognitiveMetadata = result.data?.metadata?.cognitive;
         // Include provenance chain from metadata
         if (result.cognitiveMetadata?.provenanceChain) {
           result.provenanceChain = result.cognitiveMetadata.provenanceChain;
         }
-      }
-    } else {
-      result.data = this.taskService.getTask(id);
-      result.cognitiveMetadata = result.data?.metadata?.cognitive;
-      // Include provenance chain from metadata
-      if (result.cognitiveMetadata?.provenanceChain) {
-        result.provenanceChain = result.cognitiveMetadata.provenanceChain;
+      } catch (e) {
+        // Task not found or deleted
+        if (!includeDeleted) {
+          result.data = null;
+        }
       }
     }
     
     // Traverse related entries via cognitiveLinks
-    this.traverseCognitiveLinks(id, type, visited, result.relatedEntries, 0, maxDepth);
+    this.traverseCognitiveLinks(id, type, visited, result.relatedEntries, 0, maxDepth, includeDeleted);
     
     return result;
   }
@@ -421,7 +431,8 @@ export class CognitiveBridgeService extends BaseService {
     visited: Set<string>,
     results: any[],
     depth: number,
-    maxDepth: number
+    maxDepth: number,
+    includeDeleted: boolean = false
   ): void {
     if (depth >= maxDepth || visited.has(currentId)) {
       return;
@@ -432,9 +443,20 @@ export class CognitiveBridgeService extends BaseService {
     // Find all links from this entity (supports one-to-many)
     for (const link of this.state.cognitiveLinks.values()) {
       if (link.fromId === currentId && link.fromType === currentType) {
+        // Skip deleted links unless includeDeleted is true
+        if (!includeDeleted && this.isDeleted(link)) {
+          continue;
+        }
+        
         const relatedData = link.toType === 'thought' 
-          ? this.getThoughtData(link.toId)
-          : this.taskService.getTask(link.toId);
+          ? this.getThoughtData(link.toId, includeDeleted)
+          : (() => {
+              try {
+                return this.taskService.getTask(link.toId, includeDeleted);
+              } catch (e) {
+                return null;
+              }
+            })();
         
         if (relatedData) {
           results.push({
@@ -447,7 +469,7 @@ export class CognitiveBridgeService extends BaseService {
           });
           
           // Recursively traverse (supports chains and branches)
-          this.traverseCognitiveLinks(link.toId, link.toType, visited, results, depth + 1, maxDepth);
+          this.traverseCognitiveLinks(link.toId, link.toType, visited, results, depth + 1, maxDepth, includeDeleted);
         }
       }
     }
@@ -455,9 +477,20 @@ export class CognitiveBridgeService extends BaseService {
     // Also find reverse links (supports many-to-one)
     for (const link of this.state.cognitiveLinks.values()) {
       if (link.toId === currentId && link.toType === currentType) {
+        // Skip deleted links unless includeDeleted is true
+        if (!includeDeleted && this.isDeleted(link)) {
+          continue;
+        }
+        
         const relatedData = link.fromType === 'thought' 
-          ? this.getThoughtData(link.fromId)
-          : this.taskService.getTask(link.fromId);
+          ? this.getThoughtData(link.fromId, includeDeleted)
+          : (() => {
+              try {
+                return this.taskService.getTask(link.fromId, includeDeleted);
+              } catch (e) {
+                return null;
+              }
+            })();
         
         if (relatedData && !visited.has(link.fromId)) {
           results.push({
@@ -471,7 +504,7 @@ export class CognitiveBridgeService extends BaseService {
           });
           
           // Recursively traverse reverse links
-          this.traverseCognitiveLinks(link.fromId, link.fromType, visited, results, depth + 1, maxDepth);
+          this.traverseCognitiveLinks(link.fromId, link.fromType, visited, results, depth + 1, maxDepth, includeDeleted);
         }
       }
     }
@@ -480,10 +513,12 @@ export class CognitiveBridgeService extends BaseService {
   /**
    * Get thought data from any tree
    */
-  private getThoughtData(thoughtId: string): Thought | null {
-    for (const tree of this.totService.getAllTrees()) {
+  private getThoughtData(thoughtId: string, includeDeleted: boolean = false): Thought | null {
+    for (const tree of this.totService.getAllTrees(includeDeleted)) {
       const thought = tree.thoughts.get(thoughtId);
-      if (thought) return thought;
+      if (thought && (!this.isDeleted(thought) || includeDeleted)) {
+        return thought;
+      }
     }
     return null;
   }

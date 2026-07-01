@@ -133,10 +133,13 @@ export class ToTService extends BaseService {
   /**
    * Get a tree by ID (minimal summary for LLM efficiency)
    */
-  getTree(id: string): Tree {
+  getTree(id: string, includeDeleted: boolean = false): Tree {
     validateId(id, 'Tree');
     const tree = this.state.trees.get(id);
     if (!tree) {
+      throw new TreeNotFoundError(id);
+    }
+    if (!includeDeleted && this.isDeleted(tree)) {
       throw new TreeNotFoundError(id);
     }
     // Return minimal summary for LLM efficiency
@@ -146,10 +149,13 @@ export class ToTService extends BaseService {
   /**
    * Get a tree by ID with full details (for dashboard/internal use)
    */
-  getTreeFull(id: string): Tree {
+  getTreeFull(id: string, includeDeleted: boolean = false): Tree {
     validateId(id, 'Tree');
     const tree = this.state.trees.get(id);
     if (!tree) {
+      throw new TreeNotFoundError(id);
+    }
+    if (!includeDeleted && this.isDeleted(tree)) {
       throw new TreeNotFoundError(id);
     }
     return tree;
@@ -158,8 +164,8 @@ export class ToTService extends BaseService {
   /**
    * Get all trees
    */
-  getAllTrees(): Tree[] {
-    return Array.from(this.state.trees.values());
+  getAllTrees(includeDeleted: boolean = false): Tree[] {
+    return this.filterDeletedFromMap(this.state.trees, includeDeleted);
   }
 
   /**
@@ -212,12 +218,39 @@ export class ToTService extends BaseService {
    */
   deleteTree(id: string): boolean {
     validateId(id, 'Tree');
-    const deleted = this.state.trees.delete(id);
-    if (deleted) {
-      this.triggerSave();
-      logger.info(`Deleted tree: ${id}`);
+    const tree = this.state.trees.get(id);
+    if (!tree) {
+      return false;
     }
-    return deleted;
+    // Soft-delete the tree
+    this.softDeleteEntity(tree);
+    // Also soft-delete all thoughts in the tree
+    for (const thought of tree.thoughts.values()) {
+      this.softDeleteEntity(thought);
+    }
+    this.triggerSave();
+    logger.info(`Soft-deleted tree: ${id} with ${tree.thoughts.size} thoughts`);
+    return true;
+  }
+
+  /**
+   * Delete a thought (soft-delete)
+   */
+  deleteThought(treeId: string, thoughtId: string): boolean {
+    validateId(treeId, 'Tree');
+    validateId(thoughtId, 'Thought');
+    const tree = this.state.trees.get(treeId);
+    if (!tree) {
+      return false;
+    }
+    const thought = tree.thoughts.get(thoughtId);
+    if (!thought) {
+      return false;
+    }
+    this.softDeleteEntity(thought);
+    this.triggerSave();
+    logger.info(`Soft-deleted thought: ${thoughtId} in tree: ${treeId}`);
+    return true;
   }
 
   /**
@@ -422,6 +455,19 @@ export class ToTService extends BaseService {
 
     if (!thought) {
       throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
+    }
+
+    // Validate that all child thoughts are evaluated before selecting parent
+    const unevaluatedChildren = thought.children.filter(childId => {
+      const childThought = tree.thoughts.get(childId);
+      return childThought && childThought.state !== 'evaluated';
+    });
+
+    if (unevaluatedChildren.length > 0) {
+      throw new ThoughtflowError(
+        `Cannot select thought '${thought.content}' - it has ${unevaluatedChildren.length} unevaluated child thoughts. Please evaluate all child thoughts first before selecting the parent.`,
+        'PARENT_HAS_UNEVALUATED_CHILDREN'
+      );
     }
 
     thought.state = 'selected';

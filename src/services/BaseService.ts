@@ -162,4 +162,55 @@ export abstract class BaseService {
 
     return `${slug}-${shortUuid}`;
   }
+
+  /**
+   * Soft-delete an entity by marking it as deleted
+   * @param entity - The entity to soft-delete (must have isDeleted and deletedAt fields)
+   */
+  protected softDeleteEntity(entity: any): void {
+    if (!entity) return;
+    entity.isDeleted = true;
+    entity.deletedAt = new Date().toISOString();
+  }
+
+  /**
+   * Filter out soft-deleted entities from an array
+   * @param entities - Array of entities to filter
+   * @param includeDeleted - Whether to include deleted entities (default: false)
+   * @returns Filtered array
+   */
+  protected filterDeleted<T extends { isDeleted?: boolean }>(
+    entities: T[],
+    includeDeleted: boolean = false
+  ): T[] {
+    if (includeDeleted) {
+      return entities;
+    }
+    return entities.filter(e => !e.isDeleted);
+  }
+
+  /**
+   * Filter out soft-deleted entities from a Map values
+   * @param map - Map of entities to filter
+   * @param includeDeleted - Whether to include deleted entities (default: false)
+   * @returns Filtered array
+   */
+  protected filterDeletedFromMap<T extends { isDeleted?: boolean }>(
+    map: Map<string, T>,
+    includeDeleted: boolean = false
+  ): T[] {
+    if (includeDeleted) {
+      return Array.from(map.values());
+    }
+    return Array.from(map.values()).filter(e => !e.isDeleted);
+  }
+
+  /**
+   * Check if an entity is soft-deleted
+   * @param entity - The entity to check
+   * @returns True if the entity is deleted
+   */
+  protected isDeleted(entity: any): boolean {
+    return entity?.isDeleted === true;
+  }
 }

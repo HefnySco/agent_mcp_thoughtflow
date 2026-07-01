@@ -32,13 +32,14 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
       inputSchema: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: 'Tree ID' }
+          id: { type: 'string', description: 'Tree ID' },
+          includeDeleted: { type: 'boolean', description: 'Include soft-deleted trees' }
         },
         required: ['id']
       }
     },
     handler: (args: any, service: any) => {
-      const tree = service.getTreeFull(args.id);
+      const tree = service.getTreeFull(args.id, args.includeDeleted);
       // Convert thoughts Map to object for JSON serialization
       return {
         ...tree,
@@ -53,16 +54,18 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
       description: 'List all trees',
       inputSchema: {
         type: 'object',
-        properties: {}
+        properties: {
+          includeDeleted: { type: 'boolean', description: 'Include soft-deleted trees' }
+        }
       }
     },
-    handler: (_args: any, service: any) => service.listTrees()
+    handler: (args: any, service: any) => service.listTrees(args.includeDeleted)
   },
   {
     name: 'delete_tree',
     tool: {
       name: 'delete_tree',
-      description: 'Delete a tree',
+      description: 'Soft-delete a tree (marks as deleted, preserves for recovery)',
       inputSchema: {
         type: 'object',
         properties: {
@@ -72,6 +75,22 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
       }
     },
     handler: (args: any, service: any) => service.deleteTree(args.id)
+  },
+  {
+    name: 'delete_thought',
+    tool: {
+      name: 'delete_thought',
+      description: 'Soft-delete a thought (marks as deleted, preserves for recovery)',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          treeId: { type: 'string', description: 'Tree ID' },
+          thoughtId: { type: 'string', description: 'Thought ID' }
+        },
+        required: ['treeId', 'thoughtId']
+      }
+    },
+    handler: (args: any, service: any) => service.deleteThought(args.treeId, args.thoughtId)
   },
   {
     name: 'add_idea',

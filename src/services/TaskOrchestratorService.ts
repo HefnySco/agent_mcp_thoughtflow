@@ -92,10 +92,13 @@ export class TaskOrchestratorService extends BaseService {
   /**
    * Get a task by ID
    */
-  getTask(id: string): Task {
+  getTask(id: string, includeDeleted: boolean = false): Task {
     validateId(id, 'Task');
     const task = this.state.tasks.get(id);
     if (!task) {
+      throw new TaskNotFoundError(id);
+    }
+    if (!includeDeleted && this.isDeleted(task)) {
       throw new TaskNotFoundError(id);
     }
     return task;
@@ -104,16 +107,16 @@ export class TaskOrchestratorService extends BaseService {
   /**
    * Get all tasks
    */
-  getAllTasks(): Task[] {
-    return Array.from(this.state.tasks.values());
+  getAllTasks(includeDeleted: boolean = false): Task[] {
+    return this.filterDeletedFromMap(this.state.tasks, includeDeleted);
   }
 
   /**
    * List tasks, optionally filtered by status
    * Returns minimal summaries for efficiency
    */
-  listTasks(status?: Task['status']): Array<{ id: string; name: string; status: string }> {
-    const allTasks = Array.from(this.state.tasks.values());
+  listTasks(status?: Task['status'], includeDeleted: boolean = false): Array<{ id: string; name: string; status: string }> {
+    const allTasks = this.filterDeletedFromMap(this.state.tasks, includeDeleted);
     const filtered = status ? allTasks.filter(task => task.status === status) : allTasks;
     return filtered.map(t => ({ id: t.id, name: t.name, status: t.status }));
   }
@@ -127,7 +130,7 @@ export class TaskOrchestratorService extends BaseService {
     status?: Task['status'];
     dependencies?: string[];
     metadata?: Record<string, any>;
-  }): Task {
+  }): Task & { cognitiveSuggestions?: Array<{ type: string; thoughtId: string; reason: string }> } {
     const task = this.getTask(id);
     const now = new Date().toISOString();
     
@@ -166,21 +169,41 @@ export class TaskOrchestratorService extends BaseService {
     task.updatedAt = now;
     this.state.tasks.set(id, task);
     this.triggerSave();
-    // Return minimal summary
-    return { id, name: task.name, status: task.status } as Task;
+    
+    // Generate cognitive suggestions if task was just completed
+    const cognitiveSuggestions: Array<{ type: string; thoughtId: string; reason: string }> = [];
+    if (updates.status === 'completed' && task.metadata?.cognitive?.linkedThoughtIds) {
+      const linkedThoughtIds = task.metadata.cognitive.linkedThoughtIds as string[];
+      for (const thoughtId of linkedThoughtIds) {
+        cognitiveSuggestions.push({
+          type: 'verify_thought',
+          thoughtId,
+          reason: `Task '${task.name}' completed. Consider verifying linked thought '${thoughtId}' to confirm its findings.`
+        });
+      }
+    }
+    
+    // Return minimal summary with cognitive suggestions
+    const result = { id, name: task.name, status: task.status } as Task & { cognitiveSuggestions?: Array<{ type: string; thoughtId: string; reason: string }> };
+    if (cognitiveSuggestions.length > 0) {
+      result.cognitiveSuggestions = cognitiveSuggestions;
+    }
+    return result;
   }
 
   /**
-   * Delete a task
+   * Delete a task (soft-delete)
    */
   deleteTask(id: string): boolean {
     validateId(id, 'Task');
-    const deleted = this.state.tasks.delete(id);
-    if (deleted) {
-      this.triggerSave();
-      logger.info(`Deleted task: ${id}`);
+    const task = this.state.tasks.get(id);
+    if (!task) {
+      return false;
     }
-    return deleted;
+    this.softDeleteEntity(task);
+    this.triggerSave();
+    logger.info(`Soft-deleted task: ${id}`);
+    return true;
   }
 
   /**
@@ -227,10 +250,13 @@ export class TaskOrchestratorService extends BaseService {
   /**
    * Get a workflow by ID
    */
-  getWorkflow(id: string): Workflow {
+  getWorkflow(id: string, includeDeleted: boolean = false): Workflow {
     validateId(id, 'Workflow');
     const workflow = this.state.workflows.get(id);
     if (!workflow) {
+      throw new WorkflowNotFoundError(id);
+    }
+    if (!includeDeleted && this.isDeleted(workflow)) {
       throw new WorkflowNotFoundError(id);
     }
     return workflow;
@@ -239,8 +265,8 @@ export class TaskOrchestratorService extends BaseService {
   /**
    * Get all workflows
    */
-  getAllWorkflows(): Workflow[] {
-    return Array.from(this.state.workflows.values());
+  getAllWorkflows(includeDeleted: boolean = false): Workflow[] {
+    return this.filterDeletedFromMap(this.state.workflows, includeDeleted);
   }
 
   /**
@@ -248,8 +274,9 @@ export class TaskOrchestratorService extends BaseService {
    * Tool handlers expect this name
    * Returns minimal summaries for efficiency
    */
-  listWorkflows(): Array<{ id: string; name: string; status: string; taskCount: number }> {
-    return Array.from(this.state.workflows.values()).map(w => ({
+  listWorkflows(includeDeleted: boolean = false): Array<{ id: string; name: string; status: string; taskCount: number }> {
+    const workflows = this.filterDeletedFromMap(this.state.workflows, includeDeleted);
+    return workflows.map(w => ({
       id: w.id,
       name: w.name,
       status: w.status,
@@ -258,16 +285,18 @@ export class TaskOrchestratorService extends BaseService {
   }
 
   /**
-   * Delete a workflow
+   * Delete a workflow (soft-delete)
    */
   deleteWorkflow(id: string): boolean {
     validateId(id, 'Workflow');
-    const deleted = this.state.workflows.delete(id);
-    if (deleted) {
-      this.triggerSave();
-      logger.info(`Deleted workflow: ${id}`);
+    const workflow = this.state.workflows.get(id);
+    if (!workflow) {
+      return false;
     }
-    return deleted;
+    this.softDeleteEntity(workflow);
+    this.triggerSave();
+    logger.info(`Soft-deleted workflow: ${id}`);
+    return true;
   }
 
   /**
@@ -305,6 +334,85 @@ export class TaskOrchestratorService extends BaseService {
     this.triggerSave();
     
     logger.info(`Added ${taskIds.length} tasks to workflow: ${workflowId}`);
+  }
+
+  /**
+   * Add a single task to a workflow at a specific position
+   * position: -1 = end (default), 0 = beginning, or specific index
+   */
+  addTaskToWorkflow(workflowId: string, taskId: string, position: number = -1): Workflow {
+    validateId(workflowId, 'Workflow');
+    validateId(taskId, 'Task');
+    
+    const workflow = this.state.workflows.get(workflowId);
+    if (!workflow) {
+      throw new WorkflowNotFoundError(workflowId);
+    }
+    
+    const task = this.state.tasks.get(taskId);
+    if (!task) {
+      throw new TaskNotFoundError(taskId);
+    }
+    
+    // Strategy isolation guardrail
+    if (workflow.strategyId && task.strategyId && task.strategyId !== workflow.strategyId) {
+      throw new ThoughtflowError(
+        `Cannot add task '${taskId}' from strategy '${task.strategyId}' to workflow '${workflowId}' belonging to strategy '${workflow.strategyId}'. Cross-strategy task sharing is not allowed.`,
+        'CROSS_STRATEGY_ISOLATION_VIOLATION'
+      );
+    }
+    
+    // Check if task already in workflow
+    if (workflow.taskIds.includes(taskId)) {
+      logger.info(`Task ${taskId} already in workflow ${workflowId}`);
+      return { id: workflowId, name: workflow.name, status: workflow.status } as Workflow;
+    }
+    
+    // Insert at specified position
+    if (position === -1 || position >= workflow.taskIds.length) {
+      workflow.taskIds.push(taskId);
+    } else if (position === 0) {
+      workflow.taskIds.unshift(taskId);
+    } else {
+      workflow.taskIds.splice(position, 0, taskId);
+    }
+    
+    workflow.updatedAt = new Date().toISOString();
+    this.triggerSave();
+    
+    logger.info(`Added task ${taskId} to workflow ${workflowId} at position ${position}`);
+    
+    // Return minimal summary
+    return { id: workflowId, name: workflow.name, status: workflow.status } as Workflow;
+  }
+
+  /**
+   * Remove a task from a workflow
+   */
+  removeTaskFromWorkflow(workflowId: string, taskId: string): Workflow {
+    validateId(workflowId, 'Workflow');
+    validateId(taskId, 'Task');
+    
+    const workflow = this.state.workflows.get(workflowId);
+    if (!workflow) {
+      throw new WorkflowNotFoundError(workflowId);
+    }
+    
+    const index = workflow.taskIds.indexOf(taskId);
+    
+    if (index === -1) {
+      logger.info(`Task ${taskId} not found in workflow ${workflowId}`);
+      return { id: workflowId, name: workflow.name, status: workflow.status } as Workflow;
+    }
+    
+    workflow.taskIds.splice(index, 1);
+    workflow.updatedAt = new Date().toISOString();
+    this.triggerSave();
+    
+    logger.info(`Removed task ${taskId} from workflow ${workflowId}`);
+    
+    // Return minimal summary
+    return { id: workflowId, name: workflow.name, status: workflow.status } as Workflow;
   }
 
   /**
@@ -382,6 +490,21 @@ export class TaskOrchestratorService extends BaseService {
    */
   getAllStrategies(): Strategy[] {
     return Array.from(this.state.strategies.values()).map(s => this.enrichStrategyWithLLMInstruction(s));
+  }
+
+  /**
+   * Delete a strategy (soft-delete)
+   */
+  deleteStrategy(id: string): boolean {
+    validateId(id, 'Strategy');
+    const strategy = this.state.strategies.get(id);
+    if (!strategy) {
+      return false;
+    }
+    this.softDeleteEntity(strategy);
+    this.triggerSave();
+    logger.info(`Soft-deleted strategy: ${id}`);
+    return true;
   }
 
   /**
@@ -591,18 +714,187 @@ export class TaskOrchestratorService extends BaseService {
   }
 
   /**
-   * Clear all data
+   * Clear all data (soft-delete all entities)
+   * Marks all entities as deleted instead of removing them
    */
   async clearAll(): Promise<void> {
-    // Clear the shared state object instead of creating a new one
-    this.state.tasks.clear();
-    this.state.workflows.clear();
-    this.state.workflowRuns.clear();
-    this.state.strategies.clear();
-    this.state.trees.clear();
-    this.state.cognitiveLinks.clear();
-    await this.storageAdapter.clear();
-    logger.info('Cleared all data');
+    // Soft-delete all tasks
+    for (const task of this.state.tasks.values()) {
+      this.softDeleteEntity(task);
+    }
+    // Soft-delete all workflows
+    for (const workflow of this.state.workflows.values()) {
+      this.softDeleteEntity(workflow);
+    }
+    // Soft-delete all workflow runs
+    for (const run of this.state.workflowRuns.values()) {
+      this.softDeleteEntity(run);
+    }
+    // Soft-delete all strategies
+    for (const strategy of this.state.strategies.values()) {
+      this.softDeleteEntity(strategy);
+    }
+    // Soft-delete all trees
+    for (const tree of this.state.trees.values()) {
+      this.softDeleteEntity(tree);
+    }
+    // Soft-delete all cognitive links
+    for (const link of this.state.cognitiveLinks.values()) {
+      this.softDeleteEntity(link);
+    }
+    this.triggerSave();
+    logger.info('Soft-deleted all data');
+  }
+
+  /**
+   * Purge soft-deleted items (hard delete)
+   * Permanently removes items marked as deleted from the state
+   * @param entityType - Optional: specific entity type to purge ('task', 'workflow', 'tree', 'strategy', 'link', 'all')
+   * @param olderThanDays - Optional: only purge items deleted more than this many days ago
+   * @returns Object with counts of purged items by type
+   */
+  async purgeDeleted(entityType?: string, olderThanDays?: number): Promise<{
+    tasks: number;
+    workflows: number;
+    workflowRuns: number;
+    strategies: number;
+    trees: number;
+    cognitiveLinks: number;
+  }> {
+    const now = new Date();
+    const cutoffDate = olderThanDays 
+      ? new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+
+    const result = {
+      tasks: 0,
+      workflows: 0,
+      workflowRuns: 0,
+      strategies: 0,
+      trees: 0,
+      cognitiveLinks: 0
+    };
+
+    const shouldPurgeType = (type: string): boolean => {
+      if (!entityType || entityType === 'all') return true;
+      return entityType === type;
+    };
+
+    const shouldPurgeByAge = (deletedAt: string | null | undefined): boolean => {
+      if (!cutoffDate) return true;
+      if (!deletedAt) return false;
+      return deletedAt < cutoffDate;
+    };
+
+    // Purge tasks
+    if (shouldPurgeType('task') || shouldPurgeType('all')) {
+      for (const [id, task] of this.state.tasks) {
+        if (this.isDeleted(task) && shouldPurgeByAge(task.deletedAt)) {
+          this.state.tasks.delete(id);
+          result.tasks++;
+        }
+      }
+    }
+
+    // Purge workflows
+    if (shouldPurgeType('workflow') || shouldPurgeType('all')) {
+      for (const [id, workflow] of this.state.workflows) {
+        if (this.isDeleted(workflow) && shouldPurgeByAge(workflow.deletedAt)) {
+          this.state.workflows.delete(id);
+          result.workflows++;
+        }
+      }
+    }
+
+    // Purge workflow runs
+    if (shouldPurgeType('workflow_run') || shouldPurgeType('all')) {
+      for (const [id, run] of this.state.workflowRuns) {
+        if (this.isDeleted(run) && shouldPurgeByAge(run.deletedAt)) {
+          this.state.workflowRuns.delete(id);
+          result.workflowRuns++;
+        }
+      }
+    }
+
+    // Purge strategies
+    if (shouldPurgeType('strategy') || shouldPurgeType('all')) {
+      for (const [id, strategy] of this.state.strategies) {
+        if (this.isDeleted(strategy) && shouldPurgeByAge(strategy.deletedAt)) {
+          this.state.strategies.delete(id);
+          result.strategies++;
+        }
+      }
+    }
+
+    // Purge trees
+    if (shouldPurgeType('tree') || shouldPurgeType('all')) {
+      for (const [id, tree] of this.state.trees) {
+        if (this.isDeleted(tree) && shouldPurgeByAge(tree.deletedAt)) {
+          this.state.trees.delete(id);
+          result.trees++;
+        }
+      }
+    }
+
+    // Purge cognitive links
+    if (shouldPurgeType('link') || shouldPurgeType('all')) {
+      for (const [id, link] of this.state.cognitiveLinks) {
+        if (this.isDeleted(link) && shouldPurgeByAge(link.deletedAt)) {
+          this.state.cognitiveLinks.delete(id);
+          result.cognitiveLinks++;
+        }
+      }
+    }
+
+    this.triggerSave();
+    logger.info(`Purged soft-deleted items: ${JSON.stringify(result)}`);
+    return result;
+  }
+
+  /**
+   * Restore a soft-deleted entity
+   * @param entityType - Entity type to restore ('task', 'workflow', 'tree', 'strategy', 'link')
+   * @param id - Entity ID to restore
+   * @returns True if restored, false if not found or not deleted
+   */
+  restoreDeleted(entityType: string, id: string): boolean {
+    validateId(id, entityType.charAt(0).toUpperCase() + entityType.slice(1));
+    
+    let entity: any;
+    switch (entityType) {
+      case 'task':
+        entity = this.state.tasks.get(id);
+        break;
+      case 'workflow':
+        entity = this.state.workflows.get(id);
+        break;
+      case 'tree':
+        entity = this.state.trees.get(id);
+        break;
+      case 'strategy':
+        entity = this.state.strategies.get(id);
+        break;
+      case 'link':
+        entity = this.state.cognitiveLinks.get(id);
+        break;
+      default:
+        throw new Error(`Unknown entity type: ${entityType}`);
+    }
+
+    if (!entity) {
+      return false;
+    }
+
+    if (!this.isDeleted(entity)) {
+      return false; // Not deleted, nothing to restore
+    }
+
+    // Restore by clearing deletion flags
+    entity.isDeleted = false;
+    entity.deletedAt = null;
+    this.triggerSave();
+    logger.info(`Restored ${entityType}: ${id}`);
+    return true;
   }
 
   // ============================================================================
@@ -659,6 +951,7 @@ export class TaskOrchestratorService extends BaseService {
     failedTasks: Array<{ id: string; name: string; status: string }>;
     newlyReadyTasks: Array<{ id: string; name: string; status: string }>;
     workflowStatus: 'in_progress' | 'completed' | 'failed';
+    cognitiveSuggestions?: Array<{ type: string; thoughtId: string; reason: string }>;
   } {
     validateId(runId, 'WorkflowRun');
     
@@ -710,6 +1003,21 @@ export class TaskOrchestratorService extends BaseService {
       workflowRun.status = 'completed';
     }
 
+    // Generate cognitive suggestions from completed tasks with linked thoughts
+    const cognitiveSuggestions: Array<{ type: string; thoughtId: string; reason: string }> = [];
+    for (const task of completedTasks) {
+      if (task.metadata?.cognitive?.linkedThoughtIds) {
+        const linkedThoughtIds = task.metadata.cognitive.linkedThoughtIds as string[];
+        for (const thoughtId of linkedThoughtIds) {
+          cognitiveSuggestions.push({
+            type: 'verify_thought',
+            thoughtId,
+            reason: `Task '${task.name}' completed in workflow. Consider verifying linked thought '${thoughtId}' to confirm its findings.`
+          });
+        }
+      }
+    }
+
     this.state.workflowRuns.set(runId, workflowRun);
     this.triggerSave();
     
@@ -720,12 +1028,24 @@ export class TaskOrchestratorService extends BaseService {
     const failedTaskSummaries = failedTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
     const newlyReadyTaskSummaries = newlyReadyTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
     
-    return {
+    const result: {
+      completedTasks: Array<{ id: string; name: string; status: string }>;
+      failedTasks: Array<{ id: string; name: string; status: string }>;
+      newlyReadyTasks: Array<{ id: string; name: string; status: string }>;
+      workflowStatus: 'in_progress' | 'completed' | 'failed';
+      cognitiveSuggestions?: Array<{ type: string; thoughtId: string; reason: string }>;
+    } = {
       completedTasks: completedTaskSummaries,
       failedTasks: failedTaskSummaries,
       newlyReadyTasks: newlyReadyTaskSummaries,
       workflowStatus
     };
+    
+    if (cognitiveSuggestions.length > 0) {
+      result.cognitiveSuggestions = cognitiveSuggestions;
+    }
+    
+    return result;
   }
 
   /**

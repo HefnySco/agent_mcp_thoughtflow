@@ -91,6 +91,8 @@ export interface Task {
   errorMessage?: string;
   strategyId?: string;
   metadata?: Record<string, any>;
+  isDeleted?: boolean;
+  deletedAt?: string | null;
 }
 
 export interface Workflow {
@@ -105,6 +107,8 @@ export interface Workflow {
   completedAt?: string;
   strategyId?: string;
   metadata?: Record<string, any>;
+  isDeleted?: boolean;
+  deletedAt?: string | null;
 }
 
 export interface WorkflowRun {
@@ -115,6 +119,8 @@ export interface WorkflowRun {
   completedAt?: string;
   errorMessage?: string;
   taskExecutionOrder: string[];
+  isDeleted?: boolean;
+  deletedAt?: string | null;
 }
 
 // ============================================================================
@@ -143,6 +149,8 @@ export interface Thought {
   verificationNotes?: string;
   movedAt?: string;
   metadata?: Record<string, any>;
+  isDeleted?: boolean;
+  deletedAt?: string | null;
 }
 
 export interface UsageStats {
@@ -163,6 +171,8 @@ export interface Strategy {
   updatedAt: string;
   metadata?: Record<string, any>;
   LLM_instruction?: string;
+  isDeleted?: boolean;
+  deletedAt?: string | null;
 }
 
 export interface Tree {
@@ -176,6 +186,8 @@ export interface Tree {
   strategyId?: string;
   metadata?: Record<string, any>;
   usageStats?: UsageStats;
+  isDeleted?: boolean;
+  deletedAt?: string | null;
 }
 
 // ============================================================================

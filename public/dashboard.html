@@ -34,6 +34,9 @@
     .status-in_progress { color: #60a5fa; }
     .status-completed { color: #34d399; }
     .status-failed { color: #f87171; }
+    .status-evaluated { color: #60a5fa; }
+    .status-selected { color: #34d399; }
+    .status-pruned { color: #9ca3af; }
   </style>
 </head>
 <body class="min-h-screen">
@@ -53,6 +56,10 @@
           <span class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
           <span class="text-sm text-gray-400">Connected</span>
         </div>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" id="show-deleted-checkbox" onchange="toggleShowDeleted()" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900">
+          <span class="text-sm text-gray-400">Show Deleted</span>
+        </label>
         <button onclick="toggleAutoRefresh()" id="auto-refresh-btn" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg transition-colors">
           Auto: ON
         </button>
@@ -63,7 +70,7 @@
     </header>
 
     <!-- Overview Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
       <div class="card rounded-lg p-6">
         <h3 class="text-gray-400 text-sm font-medium mb-2">Strategies</h3>
         <p id="total-strategies" class="text-3xl font-bold text-white">0</p>
@@ -84,6 +91,26 @@
         <h3 class="text-gray-400 text-sm font-medium mb-2">Cognitive Links</h3>
         <p id="total-links" class="text-3xl font-bold text-white">0</p>
       </div>
+      <div class="card rounded-lg p-6">
+        <h3 class="text-gray-400 text-sm font-medium mb-2">Promoted Tasks</h3>
+        <p id="total-promoted" class="text-3xl font-bold text-white">0</p>
+      </div>
+    </div>
+
+    <!-- Deleted Items Overview -->
+    <div class="card rounded-lg p-4 mb-8">
+      <div class="flex items-center gap-6">
+        <div>
+          <h3 class="text-gray-400 text-sm font-medium">Deleted Items</h3>
+          <p id="total-deleted" class="text-2xl font-bold text-red-400">0</p>
+        </div>
+        <div class="text-xs text-gray-500">
+          <span id="deleted-tasks">0</span> tasks, 
+          <span id="deleted-workflows">0</span> workflows, 
+          <span id="deleted-trees">0</span> trees, 
+          <span id="deleted-strategies">0</span> strategies
+        </div>
+      </div>
     </div>
 
     <!-- Strategies Panel (Full Width) -->
@@ -97,7 +124,7 @@
     <!-- Tasks Panel (Full Width) -->
     <div class="card rounded-lg p-6 mb-8">
       <h2 class="text-xl font-bold text-white mb-4">Tasks</h2>
-      <div class="grid grid-cols-4 gap-4 mb-4">
+      <div class="grid grid-cols-5 gap-4 mb-4">
         <div class="text-center">
           <p class="text-2xl font-bold status-pending" id="tasks-pending">0</p>
           <p class="text-xs text-gray-400">Pending</p>
@@ -113,6 +140,10 @@
         <div class="text-center">
           <p class="text-2xl font-bold status-failed" id="tasks-failed">0</p>
           <p class="text-xs text-gray-400">Failed</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold text-red-400" id="tasks-deleted">0</p>
+          <p class="text-xs text-gray-400">Deleted</p>
         </div>
       </div>
       <div id="tasks-list" class="space-y-2 max-h-64 overflow-y-auto">
@@ -139,8 +170,30 @@
     <!-- Cognitive Links Panel -->
     <div class="card rounded-lg p-6 mb-8">
       <h2 class="text-xl font-bold text-white mb-4">Cognitive Links & Provenance</h2>
+      <div class="grid grid-cols-3 gap-4 mb-4">
+        <div class="text-center">
+          <p class="text-2xl font-bold text-blue-400" id="links-thought-to-task">0</p>
+          <p class="text-xs text-gray-400">Thought→Task</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold text-green-400" id="links-task-to-thought">0</p>
+          <p class="text-xs text-gray-400">Task→Thought</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold text-purple-400" id="links-soft">0</p>
+          <p class="text-xs text-gray-400">Soft Links</p>
+        </div>
+      </div>
       <div id="links-list" class="space-y-3 max-h-96 overflow-y-auto">
         <p class="text-gray-500 text-sm">Loading cognitive links...</p>
+      </div>
+    </div>
+
+    <!-- Recent Promoted Tasks Panel -->
+    <div class="card rounded-lg p-6 mb-8">
+      <h2 class="text-xl font-bold text-white mb-4">Recent Promoted Tasks</h2>
+      <div id="promoted-list" class="space-y-3 max-h-64 overflow-y-auto">
+        <p class="text-gray-500 text-sm">Loading promoted tasks...</p>
       </div>
     </div>
 
@@ -165,6 +218,7 @@
     let selectedStrategyId = null;
     let expandedThoughts = new Set();
     let expandedWorkflows = new Set();
+    let showDeleted = false;
 
     async function fetchStateInfo() {
       try {
@@ -184,6 +238,8 @@
         if (!response.ok) throw new Error('Failed to fetch state');
         const rawState = await response.json();
         
+        console.log('Raw state:', rawState);
+        
         // Convert objects to arrays for dashboard
         const newState = {
           strategies: Object.values(rawState.strategies || {}),
@@ -193,10 +249,13 @@
           cognitiveLinks: Object.values(rawState.cognitiveLinks || {})
         };
         
+        console.log('Converted state:', newState);
+        
         // Check if state actually changed
         const stateChanged = JSON.stringify(newState) !== JSON.stringify(state);
         state = newState;
         
+        console.log('Calling updateDashboard with stateChanged:', stateChanged);
         updateDashboard(stateChanged);
         document.getElementById('status-indicator').innerHTML = `
           <span class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
@@ -227,28 +286,76 @@
         }
       }
 
-      // Update overview cards
-      document.getElementById('total-strategies').textContent = state.strategies?.length || 0;
-      document.getElementById('total-trees').textContent = state.trees?.length || 0;
-      document.getElementById('total-tasks').textContent = state.tasks?.length || 0;
-      document.getElementById('total-workflows').textContent = state.workflows?.length || 0;
-      document.getElementById('total-links').textContent = state.cognitiveLinks?.length || 0;
+      // Filter out deleted items by default
+      const activeStrategies = state.strategies?.filter(s => !s.isDeleted) || [];
+      const activeTrees = state.trees?.filter(t => !t.isDeleted) || [];
+      const activeTasks = state.tasks?.filter(t => !t.isDeleted) || [];
+      const activeWorkflows = state.workflows?.filter(w => !w.isDeleted) || [];
+      const activeLinks = state.cognitiveLinks?.filter(l => !l.isDeleted) || [];
 
-      // Update task status breakdown
-      const tasks = state.tasks || [];
+      // Count deleted items
+      const deletedTasks = state.tasks?.filter(t => t.isDeleted) || [];
+      const deletedWorkflows = state.workflows?.filter(w => w.isDeleted) || [];
+      const deletedTrees = state.trees?.filter(t => t.isDeleted) || [];
+      const deletedStrategies = state.strategies?.filter(s => s.isDeleted) || [];
+      const totalDeleted = deletedTasks.length + deletedWorkflows.length + deletedTrees.length + deletedStrategies.length;
+
+      // Update overview cards (show active items)
+      document.getElementById('total-strategies').textContent = activeStrategies.length;
+      document.getElementById('total-trees').textContent = activeTrees.length;
+      document.getElementById('total-tasks').textContent = activeTasks.length;
+      document.getElementById('total-workflows').textContent = activeWorkflows.length;
+      document.getElementById('total-links').textContent = activeLinks.length;
+
+      // Update deleted items overview
+      document.getElementById('total-deleted').textContent = totalDeleted;
+      document.getElementById('deleted-tasks').textContent = deletedTasks.length;
+      document.getElementById('deleted-workflows').textContent = deletedWorkflows.length;
+      document.getElementById('deleted-trees').textContent = deletedTrees.length;
+      document.getElementById('deleted-strategies').textContent = deletedStrategies.length;
+
+      // Update show deleted button
+      const showDeletedBtn = document.getElementById('show-deleted-btn');
+      if (showDeletedBtn) {
+        if (showDeleted) {
+          showDeletedBtn.textContent = 'Hide Deleted';
+          showDeletedBtn.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+          showDeletedBtn.classList.add('bg-red-700', 'hover:bg-red-600');
+        } else {
+          showDeletedBtn.textContent = 'Show Deleted';
+          showDeletedBtn.classList.remove('bg-red-700', 'hover:bg-red-600');
+          showDeletedBtn.classList.add('bg-gray-700', 'hover:bg-gray-600');
+        }
+      }
+
+      // Use active or all items based on showDeleted flag
+      const displayStrategies = showDeleted ? state.strategies : activeStrategies;
+      const displayTrees = showDeleted ? state.trees : activeTrees;
+      const displayTasks = showDeleted ? state.tasks : activeTasks;
+      const displayWorkflows = showDeleted ? state.workflows : activeWorkflows;
+      const displayLinks = showDeleted ? state.cognitiveLinks : activeLinks;
+
+      // Count promoted tasks (from active tasks only)
+      const promotedTasks = activeTasks?.filter(t => t.metadata?.cognitive?.sourceThoughtId) || [];
+      document.getElementById('total-promoted').textContent = promotedTasks.length;
+
+      // Update task status breakdown (use displayTasks)
+      const tasks = displayTasks || [];
       const pending = tasks.filter(t => t.status === 'pending').length;
       const inProgress = tasks.filter(t => t.status === 'in_progress').length;
       const completed = tasks.filter(t => t.status === 'completed').length;
       const failed = tasks.filter(t => t.status === 'failed').length;
+      const deleted = deletedTasks.length;
 
       document.getElementById('tasks-pending').textContent = pending;
       document.getElementById('tasks-in_progress').textContent = inProgress;
       document.getElementById('tasks-completed').textContent = completed;
       document.getElementById('tasks-failed').textContent = failed;
+      document.getElementById('tasks-deleted').textContent = deleted;
 
       // Update strategies list (clickable rows)
       const strategiesList = document.getElementById('strategies-list');
-      if (state.strategies?.length > 0) {
+      if (displayStrategies?.length > 0) {
         strategiesList.innerHTML = `
           <table class="w-full">
             <thead>
@@ -260,11 +367,12 @@
               </tr>
             </thead>
             <tbody>
-              ${state.strategies.map(s => `
+              ${displayStrategies.map(s => `
                 <tr onclick="selectStrategy('${s.id}')" 
-                    class="cursor-pointer hover:bg-gray-700 border-b border-gray-800 ${selectedStrategyId === s.id ? 'bg-blue-900/30 border-l-4 border-l-blue-500' : ''}">
+                    class="cursor-pointer hover:bg-gray-700 border-b border-gray-800 ${selectedStrategyId === s.id ? 'bg-blue-900/30 border-l-4 border-l-blue-500' : ''} ${s.isDeleted ? 'opacity-50 bg-red-900/10' : ''}">
                   <td class="py-3 pr-4">
-                    <span class="font-medium text-white">${escapeHtml(s.name)}</span>
+                    <span class="font-medium text-white ${s.isDeleted ? 'line-through text-red-400' : ''}">${escapeHtml(s.name)}</span>
+                    ${s.isDeleted ? '<span class="ml-2 text-xs text-red-400">(deleted)</span>' : ''}
                   </td>
                   <td class="py-3 pr-4 text-sm text-gray-400">${escapeHtml(s.description || 'No description')}</td>
                   <td class="py-3 pr-4 text-sm text-blue-400">${s.treeIds?.length || 0}</td>
@@ -282,15 +390,16 @@
       const tasksList = document.getElementById('tasks-list');
       if (tasks.length > 0) {
         tasksList.innerHTML = tasks.map(t => {
-          const parentTask = t.parentTaskId ? state.tasks?.find(pt => pt.id === t.parentTaskId) : null;
-          const dependencyTasks = t.dependencies?.map(depId => state.tasks?.find(dt => dt.id === depId)).filter(Boolean) || [];
+          const parentTask = t.parentTaskId ? displayTasks?.find(pt => pt.id === t.parentTaskId) : null;
+          const dependencyTasks = t.dependencies?.map(depId => displayTasks?.find(dt => dt.id === depId)).filter(Boolean) || [];
           
           return `
-            <div class="bg-gray-800 rounded-lg p-4 border-l-4 border-l-${getStatusBorderColor(t.status)}">
+            <div class="bg-gray-800 rounded-lg p-4 border-l-4 border-l-${getStatusBorderColor(t.status)} ${t.isDeleted ? 'opacity-50 bg-red-900/10' : ''}">
               <div class="flex justify-between items-start mb-2">
                 <div class="flex-1">
-                  <h4 class="font-medium text-white">${escapeHtml(t.name)}</h4>
+                  <h4 class="font-medium text-white ${t.isDeleted ? 'line-through text-red-400' : ''}">${escapeHtml(t.name)}</h4>
                   <p class="text-xs text-gray-400 mt-1">ID: ${t.id}</p>
+                  ${t.isDeleted ? `<p class="text-xs text-red-400 mt-1">Deleted: ${t.deletedAt ? new Date(t.deletedAt).toLocaleString() : 'N/A'}</p>` : ''}
                 </div>
                 <span class="px-2 py-1 text-xs font-medium rounded status-${t.status}">${t.status}</span>
               </div>
@@ -356,9 +465,9 @@
       const treesList = document.getElementById('trees-list');
       
       // Filter trees based on selected strategy
-      let filteredTrees = state.trees || [];
+      let filteredTrees = displayTrees || [];
       if (selectedStrategyId) {
-        const selectedStrategy = state.strategies?.find(s => s.id === selectedStrategyId);
+        const selectedStrategy = displayStrategies?.find(s => s.id === selectedStrategyId);
         if (selectedStrategy && selectedStrategy.treeIds) {
           filteredTrees = filteredTrees.filter(t => selectedStrategy.treeIds.includes(t.id));
         }
@@ -374,6 +483,9 @@
             const thought = thoughts[thoughtId];
             if (!thought) return '';
             
+            // Skip deleted thoughts unless showDeleted is true
+            if (!showDeleted && thought.isDeleted) return '';
+            
             const isExpanded = expandedThoughts.has(thoughtId);
             const hasChildren = thought.children && thought.children.length > 0;
             const stateIcon = getStateIcon(thought.state);
@@ -382,13 +494,14 @@
             
             let html = `
               <div class="thought-node mb-2" style="margin-left: ${indent}px">
-                <div class="bg-gray-700/50 rounded p-3 cursor-pointer hover:bg-gray-700 transition-colors" onclick="toggleThought('${thoughtId}')">
+                <div class="bg-gray-700/50 rounded p-3 cursor-pointer hover:bg-gray-700 transition-colors ${thought.isDeleted ? 'opacity-50 bg-red-900/10' : ''}" onclick="toggleThought('${thoughtId}')">
                   <div class="flex items-start justify-between mb-2">
                     <div class="flex items-center flex-1">
                       ${hasChildren ? `
                         <span class="mr-2 text-gray-400 text-xs">${isExpanded ? '▼' : '▶'}</span>
                       ` : '<span class="mr-2 text-gray-600 text-xs">•</span>'}
-                      <span class="text-sm font-medium text-white">${stateIcon} ${escapeHtml(thought.content)}</span>
+                      <span class="text-sm font-medium ${thought.isDeleted ? 'line-through text-red-400' : 'text-white'}">${stateIcon} ${escapeHtml(thought.content)}</span>
+                      ${thought.isDeleted ? '<span class="ml-2 text-xs text-red-400">(deleted)</span>' : ''}
                     </div>
                     ${evalScore !== null ? `
                       <span class="ml-2 px-2 py-1 text-xs font-medium rounded bg-blue-900/50 text-blue-300">${evalScore}/100</span>
@@ -409,6 +522,12 @@
                       <span class="text-gray-500">Updated:</span> ${new Date(thought.updatedAt).toLocaleString()}
                     </div>
                   </div>
+                  
+                  ${thought.isDeleted ? `
+                    <div class="text-xs text-red-400 mb-2">
+                      <span class="text-gray-500"></span> ${thought.deletedAt ? `Deleted: ${new Date(thought.deletedAt).toLocaleString()}` : 'N/A'}
+                    </div>
+                  ` : ''}
                   
                   ${thought.creativity !== null && thought.creativity !== undefined ? `
                     <div class="text-xs text-gray-400 mb-1">
@@ -435,14 +554,14 @@
                   ` : ''}
                   
                   ${thought.state === 'evaluated' && thought.evaluation !== null ? `
-                    <div class="text-xs text-gray-400">
-                      <span class="text-gray-500">State:</span> ${thought.state} (Score: ${thought.evaluation})
+                    <div class="text-xs text-gray-400 mt-1">
+                      <span class="text-gray-500 mr-1">State:</span><span class="px-2 py-1 rounded font-medium bg-gray-800 status-${thought.state}">${thought.state}</span> <span class="ml-1">(Score: ${thought.evaluation})</span>
                     </div>
-                  ` : thought.state !== 'pending' ? `
-                    <div class="text-xs text-gray-400">
-                      <span class="text-gray-500">State:</span> ${thought.state}
+                  ` : `
+                    <div class="text-xs text-gray-400 mt-1">
+                      <span class="text-gray-500 mr-1">State:</span><span class="px-2 py-1 rounded font-medium bg-gray-800 status-${thought.state || 'pending'}">${thought.state || 'pending'}</span>
                     </div>
-                  ` : ''}
+                  `}
                 </div>
             `;
             
@@ -461,11 +580,12 @@
           const treeHtml = t.rootId ? buildThoughtTree(t.rootId) : '<p class="text-gray-500 text-sm">No root thought</p>';
 
           return `
-          <div class="bg-gray-800 rounded p-4 ${selectedStrategyId ? 'border-l-4 border-l-blue-500' : ''}">
+          <div class="bg-gray-800 rounded p-4 ${selectedStrategyId ? 'border-l-4 border-l-blue-500' : ''} ${t.isDeleted ? 'opacity-50 bg-red-900/10' : ''}">
             <div class="flex justify-between items-start mb-3">
               <div class="flex-1">
-                <h4 class="font-medium text-white">${escapeHtml(t.goal)}</h4>
+                <h4 class="font-medium text-white ${t.isDeleted ? 'line-through text-red-400' : ''}">${escapeHtml(t.goal)}</h4>
                 <p class="text-xs text-gray-400 mt-1">Thoughts: ${thoughtsArray.length} | Max Depth: ${t.maxDepth || 10}</p>
+                ${t.isDeleted ? `<p class="text-xs text-red-400 mt-1">Deleted: ${t.deletedAt ? new Date(t.deletedAt).toLocaleString() : 'N/A'}</p>` : ''}
               </div>
               <div class="flex gap-2">
                 <button onclick="expandAllThoughts('${t.id}')" class="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors">
@@ -492,9 +612,9 @@
       const workflowsList = document.getElementById('workflows-list');
       
       // Filter workflows based on selected strategy
-      let filteredWorkflows = state.workflows || [];
+      let filteredWorkflows = displayWorkflows || [];
       if (selectedStrategyId) {
-        const selectedStrategy = state.strategies?.find(s => s.id === selectedStrategyId);
+        const selectedStrategy = displayStrategies?.find(s => s.id === selectedStrategyId);
         if (selectedStrategy && selectedStrategy.workflowIds) {
           filteredWorkflows = filteredWorkflows.filter(w => selectedStrategy.workflowIds.includes(w.id));
         }
@@ -502,7 +622,7 @@
       
       if (filteredWorkflows.length > 0) {
         workflowsList.innerHTML = filteredWorkflows.map(w => {
-          const workflowTasks = w.taskIds?.map(taskId => state.tasks?.find(t => t.id === taskId)).filter(Boolean) || [];
+          const workflowTasks = w.taskIds?.map(taskId => displayTasks?.find(t => t.id === taskId)).filter(Boolean) || [];
           const isExpanded = expandedWorkflows.has(w.id);
           
           // Build task tree recursively with detailed task cards
@@ -510,11 +630,11 @@
             if (!task) return '';
             
             const indent = depth * 20;
-            const subtasks = state.tasks?.filter(t => t.parentTaskId === task.id) || [];
+            const subtasks = displayTasks?.filter(t => t.parentTaskId === task.id) || [];
             const hasSubtasks = subtasks.length > 0;
             const isTaskExpanded = expandedWorkflows.has(task.id);
-            const parentTask = task.parentTaskId ? state.tasks?.find(pt => pt.id === task.parentTaskId) : null;
-            const dependencyTasks = task.dependencies?.map(depId => state.tasks?.find(dt => dt.id === depId)).filter(Boolean) || [];
+            const parentTask = task.parentTaskId ? displayTasks?.find(pt => pt.id === task.parentTaskId) : null;
+            const dependencyTasks = task.dependencies?.map(depId => displayTasks?.find(dt => dt.id === depId)).filter(Boolean) || [];
             
             let html = `
               <div class="task-node mb-3" style="margin-left: ${indent}px">
@@ -602,12 +722,13 @@
           const tasksHtml = rootTasks.length > 0 ? rootTasks.map(task => buildTaskTree(task)).join('') : '<p class="text-gray-500 text-sm">No tasks</p>';
 
           return `
-          <div class="bg-gray-800 rounded p-4 ${selectedStrategyId ? 'border-l-4 border-l-green-500' : ''}">
+          <div class="bg-gray-800 rounded p-4 ${selectedStrategyId ? 'border-l-4 border-l-green-500' : ''} ${w.isDeleted ? 'opacity-50 bg-red-900/10' : ''}">
             <div class="flex justify-between items-start mb-3">
               <div class="flex-1">
-                <h4 class="font-medium text-white">${escapeHtml(w.name)}</h4>
+                <h4 class="font-medium text-white ${w.isDeleted ? 'line-through text-red-400' : ''}">${escapeHtml(w.name)}</h4>
                 <p class="text-xs text-gray-400 mt-1">${escapeHtml(w.description || 'No description')}</p>
                 <p class="text-xs text-gray-400">Tasks: ${workflowTasks.length}</p>
+                ${w.isDeleted ? `<p class="text-xs text-red-400 mt-1">Deleted: ${w.deletedAt ? new Date(w.deletedAt).toLocaleString() : 'N/A'}</p>` : ''}
               </div>
               <div class="flex gap-2">
                 <button onclick="expandAllTasks('${w.id}')" class="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors">
@@ -632,19 +753,32 @@
 
       // Update cognitive links list
       const linksList = document.getElementById('links-list');
-      const links = state.cognitiveLinks || [];
+      const links = displayLinks || [];
+      
+      // Count by type (from all links, not just display)
+      const allLinks = state.cognitiveLinks || [];
+      const thoughtToTaskCount = allLinks.filter(l => l.type === 'thought_to_task' && !l.isDeleted).length;
+      const taskToThoughtCount = allLinks.filter(l => l.type === 'task_to_thought' && !l.isDeleted).length;
+      const softLinkCount = allLinks.filter(l => l.type === 'link' && !l.isDeleted).length;
+      
+      document.getElementById('links-thought-to-task').textContent = thoughtToTaskCount;
+      document.getElementById('links-task-to-thought').textContent = taskToThoughtCount;
+      document.getElementById('links-soft').textContent = softLinkCount;
+      
       if (links.length > 0) {
         linksList.innerHTML = links.map(l => {
           // Determine which ID is thought and which is task based on types
           const thoughtId = l.fromType === 'thought' ? l.fromId : (l.toType === 'thought' ? l.toId : null);
           const taskId = l.fromType === 'task' ? l.fromId : (l.toType === 'task' ? l.toId : null);
 
-          // Determine link direction
+          // Determine link direction and color
           let linkDirection = { text: 'unknown', class: 'text-gray-500' };
-          if (l.fromType === 'thought' && l.toType === 'task') {
+          if (l.type === 'thought_to_task') {
             linkDirection = { text: 'thought→task', class: 'text-blue-400 font-bold' };
-          } else if (l.fromType === 'task' && l.toType === 'thought') {
+          } else if (l.type === 'task_to_thought') {
             linkDirection = { text: 'task→thought', class: 'text-green-400 font-bold' };
+          } else if (l.type === 'link') {
+            linkDirection = { text: 'soft link', class: 'text-purple-400 font-bold' };
           }
 
           // Find thought content from trees
@@ -671,12 +805,14 @@
           }
 
           return `
-          <div class="bg-gray-800 rounded p-3">
+          <div class="bg-gray-800 rounded p-3 ${l.isDeleted ? 'opacity-50 bg-red-900/10' : ''}">
             <div class="flex justify-between items-start">
               <div class="flex-1">
                 <p class="text-sm text-white"><span class="text-blue-400">Thought:</span> ${escapeHtml(thoughtContent)}</p>
                 <p class="text-sm text-white"><span class="text-green-400">Task:</span> ${escapeHtml(taskName)}</p>
                 <p class="text-xs text-gray-400 mt-1">Reason: ${escapeHtml(l.reason || 'No reason')}</p>
+                <p class="text-xs text-gray-500">Created: ${new Date(l.createdAt).toLocaleString()}</p>
+                ${l.isDeleted ? `<p class="text-xs text-red-400">Deleted: ${l.deletedAt ? new Date(l.deletedAt).toLocaleString() : 'N/A'}</p>` : ''}
               </div>
               <span class="text-xs ${linkDirection.class}">${linkDirection.text}</span>
             </div>
@@ -684,6 +820,49 @@
         `}).join('');
       } else {
         linksList.innerHTML = '<p class="text-gray-500 text-sm">No cognitive links</p>';
+      }
+
+      // Update recent promoted tasks list
+      const promotedList = document.getElementById('promoted-list');
+      if (promotedTasks.length > 0) {
+        // Sort by promotedAt timestamp, most recent first
+        const sortedPromoted = [...promotedTasks].sort((a, b) => {
+          const aTime = a.metadata?.cognitive?.promotedAt || '';
+          const bTime = b.metadata?.cognitive?.promotedAt || '';
+          return bTime.localeCompare(aTime);
+        }).slice(0, 10); // Show top 10
+
+        promotedList.innerHTML = sortedPromoted.map(t => {
+          const sourceThoughtId = t.metadata?.cognitive?.sourceThoughtId;
+          const sourceTreeId = t.metadata?.cognitive?.sourceTreeId;
+          const promotedAt = t.metadata?.cognitive?.promotedAt;
+          
+          // Find source thought content
+          let sourceThoughtContent = 'N/A';
+          if (sourceThoughtId && sourceTreeId) {
+            const tree = state.trees?.find(tr => tr.id === sourceTreeId);
+            if (tree && tree.thoughts) {
+              const thought = Object.values(tree.thoughts).find(th => th.id === sourceThoughtId);
+              if (thought) {
+                sourceThoughtContent = thought.content;
+              }
+            }
+          }
+
+          return `
+          <div class="bg-gray-800 rounded p-3">
+            <div class="flex justify-between items-start">
+              <div class="flex-1">
+                <p class="text-sm font-medium text-white">${escapeHtml(t.name)}</p>
+                <p class="text-xs text-gray-400 mt-1">From thought: ${escapeHtml(sourceThoughtContent)}</p>
+                <p class="text-xs text-gray-500">Promoted: ${promotedAt ? new Date(promotedAt).toLocaleString() : 'N/A'}</p>
+              </div>
+              <span class="px-2 py-1 text-xs font-medium rounded status-${t.status}">${t.status}</span>
+            </div>
+          </div>
+        `}).join('');
+      } else {
+        promotedList.innerHTML = '<p class="text-gray-500 text-sm">No promoted tasks</p>';
       }
 
       // Update timestamp
@@ -829,6 +1008,15 @@
       };
       
       workflowTasks.forEach(task => collapseTaskRecursive(task));
+      updateDashboard(false);
+    }
+
+    function toggleShowDeleted() {
+      showDeleted = !showDeleted;
+      const checkbox = document.getElementById('show-deleted-checkbox');
+      if (checkbox) {
+        checkbox.checked = showDeleted;
+      }
       updateDashboard(false);
     }
 

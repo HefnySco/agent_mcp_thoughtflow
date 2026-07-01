@@ -33,6 +33,8 @@ export interface CognitiveLink {
   createdAt: string;
   reason?: string;
   metadata?: Record<string, any>;
+  isDeleted?: boolean;
+  deletedAt?: string | null;
 }
 
 /**
