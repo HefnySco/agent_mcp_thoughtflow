@@ -998,10 +998,17 @@ export class TaskOrchestratorService extends BaseService {
   /**
    * Start execution of a workflow
    * Creates a workflow run and marks initially ready tasks as in_progress
+   * Returns minimal task summaries to save tokens
    */
-  startWorkflowExecution(workflowId: string): { runId: string; readyTasks: Array<{ id: string; name: string; status: string }> } {
+  startWorkflowExecution(workflowId: string): {
+    runId: string;
+    workflowStatus: 'in_progress' | 'completed' | 'failed';
+    readyTasks: Array<{ id: string; name: string; status: string }>;
+    totalTasks: number;
+    readyCount: number;
+  } {
     validateId(workflowId, 'Workflow');
-    
+
     const workflow = this.state.workflows.get(workflowId);
     if (!workflow) {
       throw new WorkflowNotFoundError(workflowId);
@@ -1010,45 +1017,54 @@ export class TaskOrchestratorService extends BaseService {
     // Create workflow run
     const runId = this.generateId(`run-${workflow.name}`);
     const now = new Date().toISOString();
-    
+
     const workflowRun = {
       id: runId,
       workflowId,
       status: 'in_progress' as const,
       startedAt: now,
-      taskExecutionOrder: [...workflow.taskIds]
+      taskExecutionOrder: [...workflow.taskIds],
+      lastCompletedTaskIds: [],
+      lastFailedTaskIds: []
     };
-    
+
     this.state.workflowRuns.set(runId, workflowRun);
-    
+
     // Find and mark initially ready tasks as in_progress
     const readyTasks = this.getReadyTasks(workflowId);
     readyTasks.forEach(task => {
       const updatedTask = { ...task, status: 'in_progress' as const, startedAt: now };
       this.state.tasks.set(task.id, updatedTask);
     });
-    
+
     this.triggerSave();
     logger.info(`Started workflow execution: ${runId} for workflow: ${workflowId}`);
-    
-    // Return minimal task summaries
-    const readyTaskSummaries = readyTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
-    return { runId, readyTasks: readyTaskSummaries };
+
+    // Return minimal task summaries with summary counts
+    const readyTaskSummaries = readyTasks.map(t => ({ id: t.id, name: t.name, status: 'in_progress' }));
+    return {
+      runId,
+      workflowStatus: 'in_progress',
+      readyTasks: readyTaskSummaries,
+      totalTasks: workflow.taskIds.length,
+      readyCount: readyTasks.length
+    };
   }
 
   /**
    * Advance a workflow run after task completion
-   * Finds newly ready tasks and returns workflow status
+   * Returns deltas (newly completed/failed/ready tasks) instead of accumulated state
+   * This saves tokens by not re-listing all previously completed tasks
    */
   advanceWorkflowRun(runId: string): {
-    completedTasks: Array<{ id: string; name: string; status: string }>;
-    failedTasks: Array<{ id: string; name: string; status: string }>;
+    newlyCompletedTasks: Array<{ id: string; name: string; status: string }>;
+    newlyFailedTasks: Array<{ id: string; name: string; status: string }>;
     newlyReadyTasks: Array<{ id: string; name: string; status: string }>;
     workflowStatus: 'in_progress' | 'completed' | 'failed';
     cognitiveSuggestions?: Array<{ type: string; thoughtId: string; reason: string }>;
   } {
     validateId(runId, 'WorkflowRun');
-    
+
     const workflowRun = this.state.workflowRuns.get(runId);
     if (!workflowRun) {
       throw new ThoughtflowError(`Workflow run '${runId}' not found`, 'WORKFLOW_RUN_NOT_FOUND');
@@ -1070,6 +1086,13 @@ export class TaskOrchestratorService extends BaseService {
     const inProgressTasks = workflowTasks.filter(t => t.status === 'in_progress');
     const pendingTasks = workflowTasks.filter(t => t.status === 'pending');
 
+    // Calculate deltas: tasks that changed since last advance
+    const lastCompletedIds = workflowRun.lastCompletedTaskIds || [];
+    const lastFailedIds = workflowRun.lastFailedTaskIds || [];
+
+    const newlyCompletedTasks = completedTasks.filter(t => !lastCompletedIds.includes(t.id));
+    const newlyFailedTasks = failedTasks.filter(t => !lastFailedIds.includes(t.id));
+
     // Find newly ready tasks (pending tasks with all dependencies completed)
     const newlyReadyTasks = pendingTasks.filter(task => {
       const deps = task.dependencies || [];
@@ -1086,9 +1109,13 @@ export class TaskOrchestratorService extends BaseService {
       this.state.tasks.set(task.id, updatedTask);
     });
 
+    // Update workflow run with new completed/failed task IDs for next delta calculation
+    workflowRun.lastCompletedTaskIds = completedTasks.map(t => t.id);
+    workflowRun.lastFailedTaskIds = failedTasks.map(t => t.id);
+
     // Determine workflow status
     let workflowStatus: 'in_progress' | 'completed' | 'failed' = 'in_progress';
-    
+
     if (failedTasks.length > 0) {
       workflowStatus = 'failed';
     } else if (inProgressTasks.length === 0 && pendingTasks.length === 0) {
@@ -1097,9 +1124,9 @@ export class TaskOrchestratorService extends BaseService {
       workflowRun.status = 'completed';
     }
 
-    // Generate cognitive suggestions from completed tasks with linked thoughts
+    // Generate cognitive suggestions only from newly completed tasks with linked thoughts
     const cognitiveSuggestions: Array<{ type: string; thoughtId: string; reason: string }> = [];
-    for (const task of completedTasks) {
+    for (const task of newlyCompletedTasks) {
       if (task.metadata?.cognitive?.linkedThoughtIds) {
         const linkedThoughtIds = task.metadata.cognitive.linkedThoughtIds as string[];
         for (const thoughtId of linkedThoughtIds) {
@@ -1114,31 +1141,31 @@ export class TaskOrchestratorService extends BaseService {
 
     this.state.workflowRuns.set(runId, workflowRun);
     this.triggerSave();
-    
-    logger.info(`Advanced workflow run: ${runId}, status: ${workflowStatus}`);
-    
-    // Return minimal task summaries
-    const completedTaskSummaries = completedTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
-    const failedTaskSummaries = failedTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
+
+    logger.info(`Advanced workflow run: ${runId}, status: ${workflowStatus}, newlyCompleted: ${newlyCompletedTasks.length}, newlyReady: ${newlyReadyTasks.length}`);
+
+    // Return minimal task summaries (deltas only)
+    const newlyCompletedTaskSummaries = newlyCompletedTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
+    const newlyFailedTaskSummaries = newlyFailedTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
     const newlyReadyTaskSummaries = newlyReadyTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
-    
+
     const result: {
-      completedTasks: Array<{ id: string; name: string; status: string }>;
-      failedTasks: Array<{ id: string; name: string; status: string }>;
+      newlyCompletedTasks: Array<{ id: string; name: string; status: string }>;
+      newlyFailedTasks: Array<{ id: string; name: string; status: string }>;
       newlyReadyTasks: Array<{ id: string; name: string; status: string }>;
       workflowStatus: 'in_progress' | 'completed' | 'failed';
       cognitiveSuggestions?: Array<{ type: string; thoughtId: string; reason: string }>;
     } = {
-      completedTasks: completedTaskSummaries,
-      failedTasks: failedTaskSummaries,
+      newlyCompletedTasks: newlyCompletedTaskSummaries,
+      newlyFailedTasks: newlyFailedTaskSummaries,
       newlyReadyTasks: newlyReadyTaskSummaries,
       workflowStatus
     };
-    
+
     if (cognitiveSuggestions.length > 0) {
       result.cognitiveSuggestions = cognitiveSuggestions;
     }
-    
+
     return result;
   }
 
@@ -1169,7 +1196,7 @@ export class TaskOrchestratorService extends BaseService {
   }
 
   /**
-   * Get a workflow run by ID
+   * Get a workflow run by ID (minimal summary)
    */
   getWorkflowRun(runId: string) {
     validateId(runId, 'WorkflowRun');
@@ -1178,6 +1205,75 @@ export class TaskOrchestratorService extends BaseService {
       throw new ThoughtflowError(`Workflow run '${runId}' not found`, 'WORKFLOW_RUN_NOT_FOUND');
     }
     return run;
+  }
+
+  /**
+   * Get full workflow run status with all task details
+   * Use this when you need the complete picture of a workflow run
+   * Returns all tasks with their current status, not just deltas
+   */
+  getWorkflowRunStatus(runId: string): {
+    runId: string;
+    workflowId: string;
+    workflowStatus: 'pending' | 'in_progress' | 'completed' | 'failed';
+    startedAt: string;
+    completedAt?: string;
+    tasks: Array<{
+      id: string;
+      name: string;
+      status: string;
+      dependencies?: string[];
+    }>;
+    summary: {
+      total: number;
+      completed: number;
+      failed: number;
+      inProgress: number;
+      pending: number;
+    };
+  } {
+    validateId(runId, 'WorkflowRun');
+
+    const workflowRun = this.state.workflowRuns.get(runId);
+    if (!workflowRun) {
+      throw new ThoughtflowError(`Workflow run '${runId}' not found`, 'WORKFLOW_RUN_NOT_FOUND');
+    }
+
+    const workflow = this.state.workflows.get(workflowRun.workflowId);
+    if (!workflow) {
+      throw new WorkflowNotFoundError(workflowRun.workflowId);
+    }
+
+    // Get all tasks in the workflow with their current status
+    const workflowTasks = workflow.taskIds
+      .map(id => this.state.tasks.get(id))
+      .filter((t): t is Task => t !== undefined);
+
+    const tasks = workflowTasks.map(t => ({
+      id: t.id,
+      name: t.name,
+      status: t.status,
+      dependencies: t.dependencies
+    }));
+
+    // Calculate summary counts
+    const summary = {
+      total: workflowTasks.length,
+      completed: workflowTasks.filter(t => t.status === 'completed').length,
+      failed: workflowTasks.filter(t => t.status === 'failed').length,
+      inProgress: workflowTasks.filter(t => t.status === 'in_progress').length,
+      pending: workflowTasks.filter(t => t.status === 'pending').length
+    };
+
+    return {
+      runId: workflowRun.id,
+      workflowId: workflowRun.workflowId,
+      workflowStatus: workflowRun.status,
+      startedAt: workflowRun.startedAt,
+      completedAt: workflowRun.completedAt,
+      tasks,
+      summary
+    };
   }
 
   /**

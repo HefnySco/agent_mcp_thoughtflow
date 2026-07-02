@@ -298,7 +298,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'start_workflow_execution',
     tool: {
       name: 'start_workflow_execution',
-      description: 'Start execution of a workflow. IMPORTANT: You must manually execute the ready tasks, update their status to completed, and call advance_workflow_run to progress.',
+      description: 'Start execution of a workflow. Returns runId, workflowStatus, readyTasks (minimal summaries), totalTasks, and readyCount. IMPORTANT: You must manually execute the ready tasks, update their status to completed, and call advance_workflow_run to progress. Use get_workflow_run_status when you need the complete picture of all tasks.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -313,7 +313,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'advance_workflow_run',
     tool: {
       name: 'advance_workflow_run',
-      description: 'Advance a workflow run. Call this AFTER you have updated ready tasks to completed. Returns the next batch of ready tasks.',
+      description: 'Advance a workflow run after completing tasks. Returns deltas: newlyCompletedTasks, newlyFailedTasks, newlyReadyTasks (all minimal summaries), and workflowStatus. This is token-efficient - it does NOT re-list all previously completed tasks. Call this AFTER you have updated ready tasks to completed. Use get_workflow_run_status when you need the complete picture of all tasks.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -328,7 +328,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'get_workflow_run',
     tool: {
       name: 'get_workflow_run',
-      description: 'Get a workflow run by ID',
+      description: 'Get a workflow run by ID (minimal summary). Use get_workflow_run_status for full details including all tasks.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -338,6 +338,21 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
       }
     },
     handler: (args: any, service: any) => service.getWorkflowRun(args.runId)
+  },
+  {
+    name: 'get_workflow_run_status',
+    tool: {
+      name: 'get_workflow_run_status',
+      description: 'Get full workflow run status with all task details and summary counts. Use this when you need the complete picture of a workflow run (all tasks with their current status). For token-efficient incremental updates during execution, use advance_workflow_run instead.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          runId: { type: 'string', description: 'Workflow run ID' }
+        },
+        required: ['runId']
+      }
+    },
+    handler: (args: any, service: any) => service.getWorkflowRunStatus(args.runId)
   },
   {
     name: 'list_workflow_runs',

@@ -125,6 +125,8 @@ export interface WorkflowRun {
   completedAt?: string;
   errorMessage?: string;
   taskExecutionOrder: string[];
+  lastCompletedTaskIds?: string[]; // Track completed tasks for delta calculation
+  lastFailedTaskIds?: string[]; // Track failed tasks for delta calculation
   isDeleted?: boolean;
   deletedAt?: string | null;
 }
