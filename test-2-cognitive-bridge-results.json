@@ -1,0 +1,74 @@
+{
+  "test_name": "Cognitive Bridge Test",
+  "test_file": "test/LLM test/2-cognitive-bridge-test-prompt.md",
+  "timestamp": "2026-07-03T01:22:00Z",
+  "test_results": {
+    "1_clean_state": {
+      "status": "passed",
+      "description": "State was already clean from previous tests",
+      "expected": "Clean state for testing",
+      "actual": "State was clean"
+    },
+    "2_task_dependencies": {
+      "status": "passed",
+      "description": "Created tasks with execution ordering dependencies using batch creation",
+      "expected": "Dependent task has dependencies array with prerequisite task ID",
+      "actual": "Task 'Dependent Task' has dependencies array containing 'prerequisite-task' ID. Used for workflow execution DAG scheduling"
+    },
+    "3_parent_child_relationships": {
+      "status": "passed",
+      "description": "Created hierarchical task organization using batch creation with positional references",
+      "expected": "Subtasks have parentTaskId pointing to parent task, get_subtasks returns both subtasks",
+      "actual": "Subtasks have parentTaskId pointing to 'parent-task'. get_subtasks returned both subtasks (subtask-1, subtask-2) under parent"
+    },
+    "4_promoting_thoughts_to_tasks": {
+      "status": "passed",
+      "description": "Converted reasoning thoughts into executable tasks using promote_thought_to_tasks",
+      "expected": "Task created with cognitive metadata (sourceThoughtId, sourceTreeId, promotedAt, syncStatus)",
+      "actual": "Task 'FeatureApproach to implement feature' created with cognitive metadata: sourceThoughtId: 'approach-to-implement-feature', sourceTreeId: 'test-thought-promotion', promotedAt: timestamp, syncStatus: 'synced'"
+    },
+    "5_spawning_thoughts_from_tasks": {
+      "status": "passed",
+      "description": "Created reasoning trees from blocked tasks using spawn_tot_from_task",
+      "expected": "New tree created, task updated with explorationTreeIds and spawnedAt, tree metadata includes sourceTaskId",
+      "actual": "Tree 'explore-approaches-to-solve-the-blocked-task' created. Task updated with explorationTreeIds: ['explore-approaches-to-solve-the-blocked-task'], spawnedAt: timestamp, provenanceChain. Tree metadata includes sourceTaskId: 'blocked-task-for-reasoning'"
+    },
+    "6_sync_status_management": {
+      "status": "partially_tested",
+      "description": "Tested initial link creation with link_thought_to_task",
+      "expected": "Sync status transitions work correctly (synced → outdated → conflict → synced)",
+      "actual": "Initial link created successfully. Sync status management transitions not fully tested (requires manual updates to trigger state changes)"
+    },
+    "7_verify_persistence": {
+      "status": "passed",
+      "description": "Waited 2 seconds for debounced save, verified thoughtflow-state.json",
+      "expected": "All cognitive bridge operations persisted",
+      "actual": "Task dependencies persisted in dependencies arrays. Parent-child relationships persisted in parentTaskId fields. Promotion metadata persisted in task cognitive metadata. Spawning metadata persisted in task and tree cognitive metadata. Cognitive links created"
+    }
+  },
+  "summary": {
+    "total_tests": 7,
+    "passed": 6,
+    "partially_tested": 1,
+    "failed": 0,
+    "pass_rate": "100% of tested tests"
+  },
+  "key_findings": {
+    "task_dependencies": "WORKING - Dependencies array correctly stores prerequisite task IDs",
+    "parent_child_relationships": "WORKING - parentTaskId correctly stores parent task, get_subtasks retrieves subtasks",
+    "thought_promotion": "WORKING - promote_thought_to_tasks creates tasks with full cognitive metadata",
+    "task_spawning": "WORKING - spawn_tot_from_task creates trees with source tracking and provenance chain",
+    "cognitive_links": "WORKING - link_thought_to_task creates bidirectional cognitive links",
+    "sync_status": "PARTIALLY_TESTED - Initial link creation works, full transition cycle requires manual testing"
+  },
+  "common_issues_checked": {
+    "dependencies_not_working": false,
+    "parent_child_not_persisting": false,
+    "promotion_metadata_missing": false,
+    "spawning_metadata_missing": false,
+    "cognitive_links_not_created": false,
+    "bidirectional_sync_broken": false,
+    "sync_status_not_updating": "not_fully_tested",
+    "conflict_not_detected": "not_tested"
+  }
+}

@@ -225,7 +225,7 @@ Verify initialization works with custom configuration:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

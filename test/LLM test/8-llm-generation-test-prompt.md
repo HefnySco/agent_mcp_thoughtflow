@@ -56,7 +56,7 @@ Test the dynamic thought generation capabilities using the `generate_children_wi
 ## Test Commands
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Run tests
 npm run test

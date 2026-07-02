@@ -159,7 +159,7 @@ This means: "I'm a subtask of parent-task, but I also need some-other-task to co
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

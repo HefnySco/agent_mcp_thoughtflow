@@ -94,7 +94,7 @@ export interface Task {
   completedAt?: string;
   failedAt?: string;
   errorMessage?: string;
-  workflowId: string; // Mandatory: task belongs to exactly one workflow
+  workflowId?: string; // Optional: task can be standalone or belong to exactly one workflow
   strategyId?: string; // Denormalized from workflow for convenience
   metadata?: Record<string, any>;
   isDeleted?: boolean;

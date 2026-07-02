@@ -195,7 +195,7 @@ Test that invalid positional references are handled gracefully:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

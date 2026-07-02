@@ -142,7 +142,7 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
     name: 'evaluate_thought',
     tool: {
       name: 'evaluate_thought',
-      description: 'Evaluate a thought with a score (0-100) and optional multi-criteria fields',
+      description: 'Evaluate a thought with a score (0-100) and optional multi-criteria fields. Automatically transitions the thought from "pending" to "evaluated" state when appropriate. Returns enhanced feedback including stateTransitioned, previousState, newState, and a helpful message with next-step guidance for the LLM.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -163,7 +163,7 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
     name: 'verify_thought',
     tool: {
       name: 'verify_thought',
-      description: 'Mark a thought as verified after confirming its findings',
+      description: 'Mark a thought as verified after confirming its findings. Automatically transitions the thought from "pending" to "evaluated" state when appropriate. Returns enhanced feedback including stateTransitioned, previousState, newState, and a helpful message with next-step guidance for the LLM.',
       inputSchema: {
         type: 'object',
         properties: {

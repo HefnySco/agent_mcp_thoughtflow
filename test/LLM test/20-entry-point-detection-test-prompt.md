@@ -255,14 +255,7 @@ Verify detection isn't affected by environment variables:
 ## Test Commands
 
 ```bash
-# Clean state
-rm -f thoughtflow-state.json
 
-# Build source
-npm run build
-
-# Test running as main
-node dist/index.js
 
 # Test importing as module
 # (Create test file that imports and verify no auto-start)

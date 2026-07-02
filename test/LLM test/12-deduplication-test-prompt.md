@@ -48,7 +48,7 @@ Verify the robustness of the system's deduplication tools. Ensure that duplicate
 ## Test Commands
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Run tests
 npm run test

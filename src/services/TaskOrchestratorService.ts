@@ -137,7 +137,9 @@ export class TaskOrchestratorService extends BaseService {
    * Create multiple tasks in batch
    * Supports positional references (task-1, task-2, etc.) for dependencies and parentTaskId
    * Also supports name-based resolution
-   * Returns all tasks (minimal) + idMap mapping positional refs to real IDs
+   * If workflowId is provided but the workflow does not exist, it will be automatically created
+   * If workflowId is omitted, tasks will be created as standalone (no workflow association)
+   * Returns enhanced response with tasks, idMap, and optional workflow creation info
    */
   createTasks(params: {
     tasks: Array<{
@@ -149,19 +151,41 @@ export class TaskOrchestratorService extends BaseService {
       status?: Task['status'];
       metadata?: Record<string, any>;
     }>;
-    workflowId: string;
+    workflowId?: string;
     deduplication?: 'skip' | 'error' | 'overwrite';
-  }): { tasks: Array<{ id: string; name: string; status: string }>; idMap: Record<string, string> } {
-    validateRequiredString(params.workflowId, 'workflowId');
-    
+  }): { 
+    tasks: Array<{ id: string; name: string; status: string }>; 
+    idMap: Record<string, string>;
+    workflowId?: string;
+    workflowCreated?: boolean;
+    message?: string;
+  } {
     if (!params.tasks || params.tasks.length === 0) {
       throw new ThoughtflowError('Tasks array cannot be empty', 'INVALID_INPUT');
     }
 
-    // Validate workflow exists
-    const workflow = this.state.workflows.get(params.workflowId);
-    if (!workflow) {
-      throw new WorkflowNotFoundError(params.workflowId);
+    let workflow: Workflow | undefined;
+    let workflowCreated = false;
+    let message: string | undefined;
+
+    // Handle workflowId scenarios
+    if (params.workflowId) {
+      // workflowId is provided - check if it exists
+      workflow = this.state.workflows.get(params.workflowId);
+      if (!workflow) {
+        // Auto-create workflow
+        const strategy = this.createStrategy({ name: params.workflowId });
+        const createdWorkflow = this.createWorkflow({
+          name: params.workflowId,
+          description: `Auto-created workflow for tasks`,
+          taskIds: [],
+          strategyId: strategy.id
+        });
+        // Get the full workflow object from state (createWorkflow returns minimal summary)
+        workflow = this.state.workflows.get(createdWorkflow.id);
+        workflowCreated = true;
+        message = `Workflow '${params.workflowId}' did not exist and was automatically created. The ${params.tasks.length} new tasks have been added to it. You can later use move_task to move any of these tasks to a different workflow, or rename the workflow if the name is not ideal.`;
+      }
     }
 
     const deduplication = params.deduplication || 'skip';
@@ -176,14 +200,16 @@ export class TaskOrchestratorService extends BaseService {
       
       validateRequiredString(taskDef.name, 'name');
 
-      // Check for deduplication by normalized name
+      // Check for deduplication by normalized name (only if workflowId is provided)
       const normalizedName = this.normalizeKey(taskDef.name);
       let existingTaskId: string | null = null;
       
-      for (const [id, task] of this.state.tasks) {
-        if (this.normalizeKey(task.name) === normalizedName && task.workflowId === params.workflowId) {
-          existingTaskId = id;
-          break;
+      if (params.workflowId) {
+        for (const [id, task] of this.state.tasks) {
+          if (this.normalizeKey(task.name) === normalizedName && task.workflowId === params.workflowId) {
+            existingTaskId = id;
+            break;
+          }
         }
       }
 
@@ -239,14 +265,14 @@ export class TaskOrchestratorService extends BaseService {
         createdAt: now,
         updatedAt: now,
         workflowId: params.workflowId,
-        strategyId: workflow.strategyId,
+        strategyId: workflow?.strategyId,
         metadata: taskDef.metadata
       };
 
       this.state.tasks.set(id, newTask);
       
-      // Add task to workflow's taskIds
-      if (!workflow.taskIds.includes(id)) {
+      // Add task to workflow's taskIds (only if workflow exists)
+      if (workflow && !workflow.taskIds.includes(id)) {
         workflow.taskIds.push(id);
       }
 
@@ -264,8 +290,8 @@ export class TaskOrchestratorService extends BaseService {
       const task = this.state.tasks.get(realId);
       if (!task) continue;
 
-      // Resolve dependencies
-      if (taskDef.dependencies && taskDef.dependencies.length > 0) {
+      // Resolve dependencies (only if workflowId is provided)
+      if (params.workflowId && taskDef.dependencies && taskDef.dependencies.length > 0) {
         const resolvedDeps: string[] = [];
         for (const depRef of taskDef.dependencies) {
           const resolvedId = this.resolveTaskReference(depRef, idMap, params.workflowId);
@@ -280,8 +306,8 @@ export class TaskOrchestratorService extends BaseService {
         task.dependencies = resolvedDeps;
       }
 
-      // Resolve parentTaskId
-      if (taskDef.parentTaskId) {
+      // Resolve parentTaskId (only if workflowId is provided)
+      if (params.workflowId && taskDef.parentTaskId) {
         const resolvedParentId = this.resolveTaskReference(taskDef.parentTaskId, idMap, params.workflowId);
         if (!resolvedParentId) {
           throw new ThoughtflowError(
@@ -308,13 +334,38 @@ export class TaskOrchestratorService extends BaseService {
       this.state.tasks.set(realId, task);
     }
 
-    workflow.updatedAt = new Date().toISOString();
-    this.state.workflows.set(params.workflowId, workflow);
+    // Update workflow timestamp if workflow exists
+    if (workflow) {
+      workflow.updatedAt = new Date().toISOString();
+      this.state.workflows.set(params.workflowId!, workflow);
+    }
+    
     this.triggerSave();
     
-    logger.info(`Processed ${resultTasks.length} tasks in batch for workflow ${params.workflowId}`);
+    if (params.workflowId) {
+      logger.info(`Processed ${resultTasks.length} tasks in batch for workflow ${params.workflowId}`);
+    } else {
+      logger.info(`Processed ${resultTasks.length} standalone tasks in batch`);
+    }
     
-    return { tasks: resultTasks, idMap };
+    // Return enhanced response
+    const response: { 
+      tasks: Array<{ id: string; name: string; status: string }>; 
+      idMap: Record<string, string>;
+      workflowId?: string;
+      workflowCreated?: boolean;
+      message?: string;
+    } = { tasks: resultTasks, idMap };
+    
+    if (params.workflowId) {
+      response.workflowId = params.workflowId;
+      if (workflowCreated) {
+        response.workflowCreated = true;
+        response.message = message;
+      }
+    }
+    
+    return response;
   }
 
   /**

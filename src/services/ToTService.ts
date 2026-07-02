@@ -802,6 +802,8 @@ export class ToTService extends BaseService {
 
   /**
    * Evaluate a thought
+   * Auto-transitions from "pending" to "evaluated" when appropriate
+   * Returns rich feedback with state transition information
    */
   evaluateThought(params: {
     treeId: string;
@@ -811,7 +813,7 @@ export class ToTService extends BaseService {
     risk?: number;
     criteriaScores?: Record<string, number>;
     reasoning?: string;
-  }): Thought {
+  }): any {
     validateRequiredString(params.treeId, 'treeId');
     validateRequiredString(params.thoughtId, 'thoughtId');
     validateEvaluationScore(params.score);
@@ -832,6 +834,16 @@ export class ToTService extends BaseService {
       throw new ThoughtNotFoundError(params.treeId, `${params.thoughtId}${matchInfo}`);
     }
     
+    // Auto-transition from pending to evaluated
+    const previousState = thought.state;
+    let stateTransitioned = false;
+    
+    if (thought.state === 'pending') {
+      thought.state = 'evaluated';
+      stateTransitioned = true;
+      logger.info(`Auto-transitioned thought ${thought.id} from 'pending' to 'evaluated' during evaluation`);
+    }
+    
     thought.evaluation = params.score;
     thought.state = 'evaluated';
     
@@ -850,6 +862,7 @@ export class ToTService extends BaseService {
       thought.metadata.evaluationReasoning = params.reasoning;
     }
     
+    thought.updatedAt = new Date().toISOString();
     tree.updatedAt = new Date().toISOString();
     
     // Auto-evaluate parent if all its children are now evaluated
@@ -857,8 +870,25 @@ export class ToTService extends BaseService {
     
     this.triggerSave();
     
-    // Return minimal summary
-    return { id: thought.id, content: thought.content, state: thought.state, evaluation: thought.evaluation } as Thought;
+    // Build response with rich feedback
+    const response: any = {
+      id: thought.id,
+      content: thought.content,
+      state: thought.state,
+      evaluation: thought.evaluation
+    };
+    
+    // Add state transition info if transition occurred
+    if (stateTransitioned) {
+      response.stateTransitioned = true;
+      response.previousState = previousState;
+      response.newState = thought.state;
+      response.message = "Thought has been evaluated and automatically moved from 'pending' to 'evaluated' state. You can now safely call select_thought on it or continue exploring its children.";
+    } else {
+      response.message = "Thought has been evaluated. It was already in an evaluated or selected state.";
+    }
+    
+    return response;
   }
 
   /**
@@ -879,12 +909,14 @@ export class ToTService extends BaseService {
 
   /**
    * Verify a thought
+   * Auto-transitions from "pending" to "evaluated" when appropriate
+   * Returns rich feedback with state transition information
    */
   verifyThought(params: {
     treeId: string;
     thoughtId: string;
     verificationNotes?: string;
-  }): Thought {
+  }): any {
     const tree = this.getTreeFull(params.treeId);
     
     // Use robust lookup
@@ -901,15 +933,43 @@ export class ToTService extends BaseService {
       throw new ThoughtNotFoundError(params.treeId, `${params.thoughtId}${matchInfo}`);
     }
     
+    // Auto-transition from pending to evaluated
+    const previousState = thought.state;
+    let stateTransitioned = false;
+    
+    if (thought.state === 'pending') {
+      thought.state = 'evaluated';
+      stateTransitioned = true;
+      logger.info(`Auto-transitioned thought ${thought.id} from 'pending' to 'evaluated' during verification`);
+    }
+    
     thought.verified = true;
     if (params.verificationNotes) {
       thought.verificationNotes = params.verificationNotes;
     }
+    thought.updatedAt = new Date().toISOString();
     tree.updatedAt = new Date().toISOString();
     this.triggerSave();
     
-    // Return minimal summary
-    return { id: thought.id, content: thought.content, state: thought.state, verified: true } as Thought;
+    // Build response with rich feedback
+    const response: any = {
+      id: thought.id,
+      content: thought.content,
+      state: thought.state,
+      verified: thought.verified
+    };
+    
+    // Add state transition info if transition occurred
+    if (stateTransitioned) {
+      response.stateTransitioned = true;
+      response.previousState = previousState;
+      response.newState = thought.state;
+      response.message = "Thought has been verified and automatically moved from 'pending' to 'evaluated' state. You can now safely call select_thought on it or continue exploring its children.";
+    } else {
+      response.message = "Thought has been verified. It was already in an evaluated or selected state.";
+    }
+    
+    return response;
   }
 
   /**

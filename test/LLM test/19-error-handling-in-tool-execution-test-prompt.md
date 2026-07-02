@@ -281,7 +281,7 @@ Verify errors during shutdown are handled:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

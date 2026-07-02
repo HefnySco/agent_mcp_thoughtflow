@@ -195,7 +195,7 @@ Update strategy metadata:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

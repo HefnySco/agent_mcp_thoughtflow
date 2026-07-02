@@ -191,7 +191,7 @@ Test automatic parent evaluation when all children are evaluated (from ideas-rul
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

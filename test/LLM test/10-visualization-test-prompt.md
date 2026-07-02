@@ -44,7 +44,7 @@ Verify the `VisualizationService` behavior. Ensure that the system accurately tr
 ## Test Commands
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Run tests
 npm run test

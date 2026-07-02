@@ -95,7 +95,7 @@ Test automatic parent completion when all subtasks are completed (from workflow-
 ## Test Commands
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Run tests
 npm run test

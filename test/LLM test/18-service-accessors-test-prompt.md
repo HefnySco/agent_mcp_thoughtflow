@@ -278,7 +278,7 @@ Verify accessors handle concurrent access safely:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

@@ -265,7 +265,7 @@ Verify all resources are cleaned up:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

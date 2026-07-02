@@ -46,7 +46,7 @@ Ensure the embedded `dashboard-server.ts` correctly spins up, binds to the desig
 ## Test Commands
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Start server in background
 # (Replace with exact script name)

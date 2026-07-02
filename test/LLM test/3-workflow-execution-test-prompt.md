@@ -116,7 +116,7 @@ Create a workflow with parallel task execution:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

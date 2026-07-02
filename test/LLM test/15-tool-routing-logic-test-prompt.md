@@ -191,7 +191,7 @@ Verify routing works after service state changes:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

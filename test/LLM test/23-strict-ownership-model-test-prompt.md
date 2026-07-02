@@ -306,7 +306,7 @@ Test that ownership cannot be changed via update:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

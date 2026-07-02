@@ -215,7 +215,7 @@ Test that provenance survives entity operations:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

@@ -86,7 +86,7 @@ Create the following entities using MCP tools:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

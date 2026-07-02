@@ -66,7 +66,7 @@ Test the specific integrations with external LLM providers: Grok and Ollama. Ens
 ## Test Commands
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Run tests
 npm run test

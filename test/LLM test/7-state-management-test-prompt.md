@@ -257,7 +257,7 @@ Test backward compatibility with state file format changes:
 
 ```bash
 # Clean state before test
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

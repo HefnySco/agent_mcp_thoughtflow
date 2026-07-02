@@ -272,7 +272,7 @@ Test that deduplication is case-insensitive (normalized names):
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

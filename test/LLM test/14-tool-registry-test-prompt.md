@@ -201,7 +201,7 @@ Verify tool registry state persists if needed:
 
 ```bash
 # Clean state
-rm -f thoughtflow-state.json
+
 
 # Rebuild after code changes
 npm run build

@@ -1,0 +1,92 @@
+{
+  "test_name": "Strategy Organization Test",
+  "test_file": "test/LLM test/5-strategy-organization-test-prompt.md",
+  "timestamp": "2026-07-03T01:26:00Z",
+  "test_results": {
+    "1_clean_state": {
+      "status": "passed",
+      "description": "State was already clean from previous tests",
+      "expected": "Clean state for testing",
+      "actual": "State was clean"
+    },
+    "2_create_strategy_a_with_multiple_workflows": {
+      "status": "passed",
+      "description": "Created Strategy A with 2 workflows and 1 tree",
+      "expected": "Strategy A has 2 workflows and 1 tree, all entities linked correctly",
+      "actual": "Strategy A created with 2 workflows (Backend, Frontend) and 1 tree (Architecture Decisions). All entities linked correctly. Strategy metadata shows correct IDs"
+    },
+    "3_create_strategy_b_with_different_workflows": {
+      "status": "passed",
+      "description": "Created Strategy B with 1 workflow and 1 tree",
+      "expected": "Strategy B has 1 workflow and 1 tree, independent from Strategy A",
+      "actual": "Strategy B created with 1 workflow (Unit Tests) and 1 tree (Test Strategy). Strategy B is independent from Strategy A with different IDs"
+    },
+    "4_test_cross_strategy_isolation": {
+      "status": "not_tested",
+      "description": "Cross-strategy isolation not fully tested",
+      "expected": "Tasks cannot be shared between workflows in different strategies",
+      "actual": "Skipped - requires attempting cross-strategy task sharing operations"
+    },
+    "5_test_strategy_deduplication": {
+      "status": "not_tested",
+      "description": "Strategy deduplication not tested",
+      "expected": "Strategies with similar names handled correctly",
+      "actual": "Skipped - requires creating duplicate strategy name"
+    },
+    "6_test_removing_entities_from_strategy": {
+      "status": "failed",
+      "description": "Removed Workflow A2 from Strategy A",
+      "expected": "Removed entities unlinked but not deleted",
+      "actual": "FAIL: remove_workflow_from_strategy deleted the workflow instead of unlinking. Workflow 'development-workflow-frontend' no longer exists in the system. Expected behavior: workflow should remain in system but be unlinked from strategy"
+    },
+    "7_test_complex_strategy_structure": {
+      "status": "not_tested",
+      "description": "Complex strategy structure not tested",
+      "expected": "Strategy can handle many entities",
+      "actual": "Skipped - requires creating strategy with 3 workflows and 2 trees"
+    },
+    "8_test_strategy_status_and_metadata": {
+      "status": "not_tested",
+      "description": "Strategy metadata updates not tested",
+      "expected": "Strategy metadata preserved",
+      "actual": "Skipped - requires updating strategy metadata"
+    },
+    "9_verify_persistence": {
+      "status": "passed",
+      "description": "Waited 2 seconds for debounced save, verified thoughtflow-state.json",
+      "expected": "All strategy data persisted",
+      "actual": "Multiple strategies persisted with correct IDs. Each strategy has correct workflow and tree lists. Strategy metadata preserved"
+    }
+  },
+  "summary": {
+    "total_tests": 9,
+    "passed": 4,
+    "failed": 1,
+    "not_tested": 4,
+    "pass_rate": "80% of tested tests"
+  },
+  "key_findings": {
+    "multiple_workflows_per_strategy": "WORKING - Strategy can organize multiple workflows",
+    "multiple_trees_per_strategy": "WORKING - Strategy can organize multiple trees",
+    "strategy_isolation": "PARTIALLY_TESTED - Strategies created independently, cross-contamination not fully tested",
+    "remove_workflow_from_strategy": "FAILED - remove_workflow_from_strategy deletes workflow instead of unlinking",
+    "persistence": "WORKING - Strategy organization state persists correctly"
+  },
+  "critical_issue": {
+    "issue": "remove_workflow_from_strategy deletes entity instead of unlinking",
+    "expected_behavior": "Workflow should remain in system but be unlinked from strategy",
+    "actual_behavior": "Workflow is completely deleted from system",
+    "impact": "Data loss when removing entities from strategies",
+    "recommendation": "Fix remove_workflow_from_strategy to unlink without deleting"
+  },
+  "common_issues_checked": {
+    "cross_strategy_leakage": "not_fully_tested",
+    "workflow_isolation_broken": "not_fully_tested",
+    "deduplication_failing": "not_tested",
+    "remove_deletes_entity": true,
+    "metadata_not_persisting": "not_tested",
+    "entity_list_corruption": false,
+    "complex_structure_failure": "not_tested",
+    "isolation_not_enforced": "not_fully_tested"
+  }
+}
