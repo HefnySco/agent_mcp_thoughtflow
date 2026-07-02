@@ -157,6 +157,7 @@ export interface Thought {
   verificationNotes?: string;
   movedAt?: string;
   metadata?: Record<string, any>;
+  normalizedName?: string; // Clean slug without suffix for LLM reference
   isDeleted?: boolean;
   deletedAt?: string | null;
 }
@@ -194,6 +195,7 @@ export interface Tree {
   strategyId: string; // Mandatory: tree belongs to exactly one strategy
   metadata?: Record<string, any>;
   usageStats?: UsageStats;
+  normalizedName?: string; // Clean slug without suffix for LLM reference
   isDeleted?: boolean;
   deletedAt?: string | null;
 }

@@ -17,6 +17,57 @@ import { validateRequiredString, validateId, validateEvaluationScore } from '../
 import { MockLLMProvider } from '../llm-providers/mock-llm-provider.js';
 
 /**
+ * Calculate Levenshtein distance between two strings
+ */
+function levenshteinDistance(a: string, b: string): number {
+  const matrix = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(null));
+
+  for (let i = 0; i <= a.length; i++) {
+    matrix[0][i] = i;
+  }
+  for (let j = 0; j <= b.length; j++) {
+    matrix[j][0] = j;
+  }
+
+  for (let j = 1; j <= b.length; j++) {
+    for (let i = 1; i <= a.length; i++) {
+      const indicator = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[j][i] = Math.min(
+        matrix[j][i - 1] + 1,
+        matrix[j - 1][i] + 1,
+        matrix[j - 1][i - 1] + indicator
+      );
+    }
+  }
+
+  return matrix[b.length][a.length];
+}
+
+/**
+ * Find closest matching thought ID by normalized name
+ * Returns array of [id, distance] pairs sorted by distance
+ */
+function findClosestMatches(
+  targetId: string,
+  thoughtIds: string[],
+  maxDistance: number = 3
+): Array<{ id: string; distance: number }> {
+  const targetSlug = targetId.toLowerCase().replace(/[^a-z0-9-]/g, '');
+  const matches: Array<{ id: string; distance: number }> = [];
+
+  for (const id of thoughtIds) {
+    const idSlug = id.toLowerCase().replace(/[^a-z0-9-]/g, '');
+    const distance = levenshteinDistance(targetSlug, idSlug);
+    
+    if (distance <= maxDistance) {
+      matches.push({ id, distance });
+    }
+  }
+
+  return matches.sort((a, b) => a.distance - b.distance);
+}
+
+/**
  * LLM instruction for Strategy usage
  * Provides guidance to the LLM on how to use Strategies correctly
  */
@@ -89,7 +140,7 @@ export class ToTService extends BaseService {
         // Only return existing tree if it has thoughts (not a stale empty tree)
         if (existingTree.thoughts.size > 0) {
           logger.info(`Returning existing tree: ${id} - ${existingTree.goal} (normalized: ${normalizedGoal})`);
-          return existingTree;
+          return { id: existingTree.id, goal: existingTree.goal, rootId: existingTree.rootId, normalizedName: this.slugify(existingTree.goal) } as any;
         } else {
           logger.info(`Deleting stale empty tree: ${id} - ${existingTree.goal} (normalized: ${normalizedGoal})`);
           this.state.trees.delete(id);
@@ -97,8 +148,19 @@ export class ToTService extends BaseService {
       }
     }
 
-    const treeId = this.generateId(params.goal);
-    const rootId = this.generateId(params.rootContent);
+    // Collect existing IDs for collision detection
+    const existingTreeIds = new Set(this.state.trees.keys());
+    const existingThoughtIds = new Set<string>();
+    for (const tree of this.state.trees.values()) {
+      for (const thoughtId of tree.thoughts.keys()) {
+        existingThoughtIds.add(thoughtId);
+      }
+    }
+
+    // Generate slug-based IDs with collision detection
+    const treeId = this.generateSlugId(params.goal, existingTreeIds);
+    const rootId = this.generateSlugId(params.rootContent, existingThoughtIds);
+    
     const now = new Date().toISOString();
 
     const treeMetadata = params.metadata ? { ...params.metadata } : {};
@@ -151,8 +213,8 @@ export class ToTService extends BaseService {
       this.cognitiveBridgeService.ensureCognitiveHierarchy(tree, 'tree', params.goal);
     }
 
-    // Return minimal summary for LLM efficiency
-    return { id: treeId, goal: params.goal, rootId } as Tree;
+    // Return with both id and normalizedName
+    return { id: treeId, goal: params.goal, rootId, normalizedName: this.slugify(params.goal) } as any;
   }
 
   /**
@@ -279,6 +341,55 @@ export class ToTService extends BaseService {
   }
 
   /**
+   * Robust thought lookup with fuzzy matching
+   * First tries exact match, then fuzzy within tree, then within strategy
+   */
+  private findThoughtRobustly(treeId: string, thoughtId: string): { thought: Thought; tree: Tree } | null {
+    // Try exact match first
+    const tree = this.getTreeFull(treeId);
+    const exactMatch = tree.thoughts.get(thoughtId);
+    if (exactMatch) {
+      return { thought: exactMatch, tree };
+    }
+
+    // Try fuzzy match within the same tree
+    const treeThoughtIds = Array.from(tree.thoughts.keys());
+    const closeMatches = findClosestMatches(thoughtId, treeThoughtIds, 3);
+    
+    if (closeMatches.length > 0) {
+      const bestMatch = tree.thoughts.get(closeMatches[0].id);
+      if (bestMatch) {
+        logger.warn(`Thought '${thoughtId}' not found exactly. Using closest match '${closeMatches[0].id}' (distance: ${closeMatches[0].distance})`);
+        return { thought: bestMatch, tree };
+      }
+    }
+
+    // Try fuzzy match across all trees in the same strategy
+    const strategy = this.state.strategies.get(tree.strategyId);
+    if (strategy) {
+      for (const otherTreeId of strategy.treeIds) {
+        if (otherTreeId === treeId) continue; // Already checked this tree
+        
+        const otherTree = this.state.trees.get(otherTreeId);
+        if (otherTree) {
+          const otherThoughtIds = Array.from(otherTree.thoughts.keys());
+          const strategyMatches = findClosestMatches(thoughtId, otherThoughtIds, 3);
+          
+          if (strategyMatches.length > 0) {
+            const bestMatch = otherTree.thoughts.get(strategyMatches[0].id);
+            if (bestMatch) {
+              logger.warn(`Thought '${thoughtId}' not found in tree ${treeId}. Found in tree ${otherTreeId} as '${strategyMatches[0].id}' (distance: ${strategyMatches[0].distance})`);
+              return { thought: bestMatch, tree: otherTree };
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Add a child thought to an existing thought
    */
   addChildThought(params: {
@@ -292,17 +403,30 @@ export class ToTService extends BaseService {
     validateRequiredString(params.content, 'content');
     
     const tree = this.getTreeFull(params.treeId);
-    const parentThought = tree.thoughts.get(params.parentId);
+    
+    // Use robust lookup for parent thought
+    const parentResult = this.findThoughtRobustly(params.treeId, params.parentId);
+    const parentThought = parentResult?.thought || tree.thoughts.get(params.parentId);
     
     if (!parentThought) {
-      throw new ThoughtNotFoundError(params.treeId, params.parentId);
+      // Provide helpful error message with closest matches
+      const treeThoughtIds = Array.from(tree.thoughts.keys());
+      const closeMatches = findClosestMatches(params.parentId, treeThoughtIds, 3);
+      const matchInfo = closeMatches.length > 0 
+        ? ` Did you mean: ${closeMatches.map(m => `'${m.id}'`).join(', ')}?`
+        : '';
+      throw new ThoughtNotFoundError(params.treeId, `${params.parentId}${matchInfo}`);
     }
     
     if (parentThought.depth >= tree.maxDepth) {
       throw new ValidationError(`Maximum depth reached for tree ${params.treeId}`, 'depth');
     }
     
-    const childId = this.generateId(params.content);
+    // Collect existing thought IDs for collision detection
+    const existingThoughtIds = new Set(tree.thoughts.keys());
+    
+    // Generate slug-based ID with collision detection
+    const childId = this.generateSlugId(params.content, existingThoughtIds);
     const now = new Date().toISOString();
     
     const childThought: Thought = {
@@ -325,8 +449,8 @@ export class ToTService extends BaseService {
     
     logger.info(`Added child thought ${childId} to parent ${params.parentId} in tree ${params.treeId}`);
     
-    // Return minimal summary
-    return { id: childId, content: params.content, state: 'pending' } as Thought;
+    // Return with both id and normalizedName
+    return { id: childId, content: params.content, state: 'pending', normalizedName: this.slugify(params.content) } as any;
   }
 
   /**
@@ -345,10 +469,19 @@ export class ToTService extends BaseService {
     validateId(thoughtId, 'Thought');
 
     const tree = this.getTreeFull(treeId);
-    const thought = tree.thoughts.get(thoughtId);
+    
+    // Use robust lookup
+    const result = this.findThoughtRobustly(treeId, thoughtId);
+    const thought = result?.thought || tree.thoughts.get(thoughtId);
 
     if (!thought) {
-      throw new ThoughtNotFoundError(treeId, thoughtId);
+      // Provide helpful error message with closest matches
+      const treeThoughtIds = Array.from(tree.thoughts.keys());
+      const closeMatches = findClosestMatches(thoughtId, treeThoughtIds, 3);
+      const matchInfo = closeMatches.length > 0 
+        ? ` Did you mean: ${closeMatches.map(m => `'${m.id}'`).join(', ')}?`
+        : '';
+      throw new ThoughtNotFoundError(treeId, `${thoughtId}${matchInfo}`);
     }
 
     // Return minimal summary for LLM efficiency
@@ -456,10 +589,19 @@ export class ToTService extends BaseService {
     validateEvaluationScore(params.score);
     
     const tree = this.getTreeFull(params.treeId);
-    const thought = tree.thoughts.get(params.thoughtId);
+    
+    // Use robust lookup
+    const result = this.findThoughtRobustly(params.treeId, params.thoughtId);
+    const thought = result?.thought || tree.thoughts.get(params.thoughtId);
     
     if (!thought) {
-      throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
+      // Provide helpful error message with closest matches
+      const treeThoughtIds = Array.from(tree.thoughts.keys());
+      const closeMatches = findClosestMatches(params.thoughtId, treeThoughtIds, 3);
+      const matchInfo = closeMatches.length > 0 
+        ? ` Did you mean: ${closeMatches.map(m => `'${m.id}'`).join(', ')}?`
+        : '';
+      throw new ThoughtNotFoundError(params.treeId, `${params.thoughtId}${matchInfo}`);
     }
     
     thought.evaluation = params.score;
@@ -516,10 +658,19 @@ export class ToTService extends BaseService {
     verificationNotes?: string;
   }): Thought {
     const tree = this.getTreeFull(params.treeId);
-    const thought = tree.thoughts.get(params.thoughtId);
+    
+    // Use robust lookup
+    const result = this.findThoughtRobustly(params.treeId, params.thoughtId);
+    const thought = result?.thought || tree.thoughts.get(params.thoughtId);
     
     if (!thought) {
-      throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
+      // Provide helpful error message with closest matches
+      const treeThoughtIds = Array.from(tree.thoughts.keys());
+      const closeMatches = findClosestMatches(params.thoughtId, treeThoughtIds, 3);
+      const matchInfo = closeMatches.length > 0 
+        ? ` Did you mean: ${closeMatches.map(m => `'${m.id}'`).join(', ')}?`
+        : '';
+      throw new ThoughtNotFoundError(params.treeId, `${params.thoughtId}${matchInfo}`);
     }
     
     thought.verified = true;
@@ -541,10 +692,19 @@ export class ToTService extends BaseService {
     thoughtId: string;
   }): Thought {
     const tree = this.getTreeFull(params.treeId);
-    const thought = tree.thoughts.get(params.thoughtId);
+    
+    // Use robust lookup
+    const result = this.findThoughtRobustly(params.treeId, params.thoughtId);
+    const thought = result?.thought || tree.thoughts.get(params.thoughtId);
 
     if (!thought) {
-      throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
+      // Provide helpful error message with closest matches
+      const treeThoughtIds = Array.from(tree.thoughts.keys());
+      const closeMatches = findClosestMatches(params.thoughtId, treeThoughtIds, 3);
+      const matchInfo = closeMatches.length > 0 
+        ? ` Did you mean: ${closeMatches.map(m => `'${m.id}'`).join(', ')}?`
+        : '';
+      throw new ThoughtNotFoundError(params.treeId, `${params.thoughtId}${matchInfo}`);
     }
 
     // Validate that all child thoughts are evaluated before selecting parent
@@ -576,10 +736,19 @@ export class ToTService extends BaseService {
     thoughtId: string;
   }): Thought {
     const tree = this.getTreeFull(params.treeId);
-    const thought = tree.thoughts.get(params.thoughtId);
+    
+    // Use robust lookup
+    const result = this.findThoughtRobustly(params.treeId, params.thoughtId);
+    const thought = result?.thought || tree.thoughts.get(params.thoughtId);
     
     if (!thought) {
-      throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
+      // Provide helpful error message with closest matches
+      const treeThoughtIds = Array.from(tree.thoughts.keys());
+      const closeMatches = findClosestMatches(params.thoughtId, treeThoughtIds, 3);
+      const matchInfo = closeMatches.length > 0 
+        ? ` Did you mean: ${closeMatches.map(m => `'${m.id}'`).join(', ')}?`
+        : '';
+      throw new ThoughtNotFoundError(params.treeId, `${params.thoughtId}${matchInfo}`);
     }
     
     // Mark the target thought as pruned
@@ -728,10 +897,19 @@ export class ToTService extends BaseService {
     }
 
     const tree = this.getTreeFull(params.treeId);
-    const parentThought = tree.thoughts.get(params.parentId);
+    
+    // Use robust lookup
+    const result = this.findThoughtRobustly(params.treeId, params.parentId);
+    const parentThought = result?.thought || tree.thoughts.get(params.parentId);
     
     if (!parentThought) {
-      throw new ThoughtNotFoundError(params.treeId, params.parentId);
+      // Provide helpful error message with closest matches
+      const treeThoughtIds = Array.from(tree.thoughts.keys());
+      const closeMatches = findClosestMatches(params.parentId, treeThoughtIds, 3);
+      const matchInfo = closeMatches.length > 0 
+        ? ` Did you mean: ${closeMatches.map(m => `'${m.id}'`).join(', ')}?`
+        : '';
+      throw new ThoughtNotFoundError(params.treeId, `${params.parentId}${matchInfo}`);
     }
 
     const numChildren = params.numChildren || 3;
@@ -787,10 +965,19 @@ export class ToTService extends BaseService {
     }
 
     const tree = this.getTreeFull(params.treeId);
-    const thought = tree.thoughts.get(params.thoughtId);
+    
+    // Use robust lookup
+    const result = this.findThoughtRobustly(params.treeId, params.thoughtId);
+    const thought = result?.thought || tree.thoughts.get(params.thoughtId);
     
     if (!thought) {
-      throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
+      // Provide helpful error message with closest matches
+      const treeThoughtIds = Array.from(tree.thoughts.keys());
+      const closeMatches = findClosestMatches(params.thoughtId, treeThoughtIds, 3);
+      const matchInfo = closeMatches.length > 0 
+        ? ` Did you mean: ${closeMatches.map(m => `'${m.id}'`).join(', ')}?`
+        : '';
+      throw new ThoughtNotFoundError(params.treeId, `${params.thoughtId}${matchInfo}`);
     }
 
     // Build context for evaluation
@@ -856,10 +1043,19 @@ export class ToTService extends BaseService {
     }
 
     const tree = this.getTreeFull(params.treeId);
-    const thought = tree.thoughts.get(params.thoughtId);
+    
+    // Use robust lookup
+    const result = this.findThoughtRobustly(params.treeId, params.thoughtId);
+    const thought = result?.thought || tree.thoughts.get(params.thoughtId);
     
     if (!thought) {
-      throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
+      // Provide helpful error message with closest matches
+      const treeThoughtIds = Array.from(tree.thoughts.keys());
+      const closeMatches = findClosestMatches(params.thoughtId, treeThoughtIds, 3);
+      const matchInfo = closeMatches.length > 0 
+        ? ` Did you mean: ${closeMatches.map(m => `'${m.id}'`).join(', ')}?`
+        : '';
+      throw new ThoughtNotFoundError(params.treeId, `${params.thoughtId}${matchInfo}`);
     }
 
     const goal = params.goal || tree.goal;
@@ -917,10 +1113,20 @@ export class ToTService extends BaseService {
     let parentId: string | null = null;
     
     for (const thoughtId of params.thoughtIds) {
-      const thought = tree.thoughts.get(thoughtId);
+      // Use robust lookup for each thought
+      const result = this.findThoughtRobustly(params.treeId, thoughtId);
+      const thought = result?.thought || tree.thoughts.get(thoughtId);
+      
       if (!thought) {
-        throw new ThoughtNotFoundError(params.treeId, thoughtId);
+        // Provide helpful error message with closest matches
+        const treeThoughtIds = Array.from(tree.thoughts.keys());
+        const closeMatches = findClosestMatches(thoughtId, treeThoughtIds, 3);
+        const matchInfo = closeMatches.length > 0 
+          ? ` Did you mean: ${closeMatches.map(m => `'${m.id}'`).join(', ')}?`
+          : '';
+        throw new ThoughtNotFoundError(params.treeId, `${thoughtId}${matchInfo}`);
       }
+      
       thoughtsToSynthesize.push(thought.content);
       if (parentId === null) {
         parentId = thought.parentId;

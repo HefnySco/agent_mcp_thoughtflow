@@ -51,7 +51,8 @@ export class TaskOrchestratorService extends BaseService {
     validateRequiredString(task.name, 'name');
     validateRequiredString(task.workflowId, 'workflowId');
     
-    const id = this.generateId(task.name);
+    const existingIds = new Set(this.state.tasks.keys());
+    const id = this.generateSlugId(task.name, existingIds);
     const now = new Date().toISOString();
     
     // Validate workflow exists
@@ -268,7 +269,8 @@ export class TaskOrchestratorService extends BaseService {
     validateRequiredString(workflow.name, 'name');
     validateRequiredString(workflow.strategyId, 'strategyId');
     
-    const id = this.generateId(workflow.name);
+    const existingIds = new Set(this.state.workflows.keys());
+    const id = this.generateSlugId(workflow.name, existingIds);
     const now = new Date().toISOString();
     
     // Validate strategy exists
@@ -1015,7 +1017,8 @@ export class TaskOrchestratorService extends BaseService {
     }
 
     // Create workflow run
-    const runId = this.generateId(`run-${workflow.name}`);
+    const existingRunIds = new Set(this.state.workflowRuns.keys());
+    const runId = this.generateSlugId(`run-${workflow.name}`, existingRunIds);
     const now = new Date().toISOString();
 
     const workflowRun = {

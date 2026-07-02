@@ -138,29 +138,49 @@ export abstract class BaseService {
   }
 
   /**
-   * Generate a unique ID.
-   * If a name/tag is provided, create a readable ID in the format:
-   *   slugified-name + short-uuid
-   * Otherwise return a pure UUID.
+   * Create a slug from a string for ID generation.
+   * Converts to lowercase, replaces non-alphanumeric with dashes, trims.
    */
-  protected generateId(nameOrTag?: string | null): string {
-    const uuid = uuidv4();
-
-    if (!nameOrTag) {
-      return uuid;
-    }
-
-    // Create a clean slug from the name
-    const slug = nameOrTag
+  protected slugify(text: string): string {
+    return text
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')     // replace non-alphanumeric with dash
       .replace(/^-+|-+$/g, '')         // trim leading/trailing dashes
-      .substring(0, 50);               // limit length
+      .substring(0, 100);              // limit length to 100 chars
+  }
 
-    // Take last 8 characters of UUID for uniqueness
-    const shortUuid = uuid.split('-').pop()?.substring(0, 8) || uuid.substring(0, 8);
-
-    return `${slug}-${shortUuid}`;
+  /**
+   * Generate a slug-based ID with collision detection.
+   * First tries to use the slug directly. If collision exists in the provided set,
+   * appends a short suffix.
+   * 
+   * @param content - The content to slugify
+   * @param existingIds - Set of existing IDs to check for collisions
+   * @param shortSuffix - Optional short suffix to use if collision (e.g., from UUID)
+   * @returns A unique ID based on the slug
+   */
+  protected generateSlugId(content: string, existingIds: Set<string>, shortSuffix?: string): string {
+    const slug = this.slugify(content);
+    
+    // If slug is not in existing IDs, use it directly
+    if (!existingIds.has(slug)) {
+      return slug;
+    }
+    
+    // Collision exists - append suffix
+    const suffix = shortSuffix || uuidv4().split('-').pop()?.substring(0, 8) || 'xyz';
+    const slugWithSuffix = `${slug}-${suffix}`;
+    
+    // If the suffixed version also collides, keep trying with different suffixes
+    if (existingIds.has(slugWithSuffix)) {
+      let counter = 1;
+      while (existingIds.has(`${slug}-${suffix}-${counter}`)) {
+        counter++;
+      }
+      return `${slug}-${suffix}-${counter}`;
+    }
+    
+    return slugWithSuffix;
   }
 
   /**

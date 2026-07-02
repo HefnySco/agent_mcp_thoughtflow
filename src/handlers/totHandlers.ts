@@ -13,6 +13,8 @@ export function registerTotHandlers(
   /**
    * Create a new Tree of Thoughts
    * REQUIRES strategyId - tree must belong to exactly one strategy
+   * Returns both 'id' (actual ID used) and 'normalizedName' (clean slug without suffix)
+   * Use normalizedName for future references when possible - it's more readable and stable
    */
   registerTool(
     'create_tree',
@@ -61,6 +63,9 @@ export function registerTotHandlers(
 
   /**
    * Add a child thought to an existing thought
+   * Returns both 'id' (actual ID used) and 'normalizedName' (clean slug without suffix)
+   * Use normalizedName for future references when possible - it's more readable and stable
+   * Fuzzy matching is enabled: if parentId is slightly wrong, the system will find the closest match
    */
   registerTool(
     'add_child',

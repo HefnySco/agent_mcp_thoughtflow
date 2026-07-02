@@ -460,7 +460,8 @@ export class CognitiveBridgeService extends BaseService {
    * Create a cognitive link
    */
   private createCognitiveLink(link: Omit<CognitiveLink, 'id'>): void {
-    const id = this.generateId(link.type);
+    const existingIds = new Set(this.state.cognitiveLinks.keys());
+    const id = this.generateSlugId(link.type, existingIds);
     this.state.cognitiveLinks.set(id, { ...link, id });
   }
 
