@@ -6,25 +6,37 @@ import type { ToolHandler } from './ToolRegistry.js';
  */
 export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandler }[] = [
   {
-    name: 'create_task',
+    name: 'create_tasks',
     tool: {
-      name: 'create_task',
-      description: 'Create a new task with optional dependencies and metadata',
+      name: 'create_tasks',
+      description: 'BATCH task creation - use this for creating multiple related tasks. Single-item create_task is NOT available. Supports positional references (task-1, task-2, etc.) for dependencies and parentTaskId within the batch - e.g., dependencies: ["task-1", "task-3"] or parentTaskId: "task-2". Also supports name-based resolution for existing tasks. Returns { tasks: [{id, name, status}], idMap: {"task-1": "real-id", ...} } so you can map positional refs to real IDs. Use deduplication="skip" to reuse existing tasks, "error" to fail on duplicates, or "overwrite" to create new ones. All tasks must belong to the same workflow. This is the ONLY way to create tasks - always use batch for efficiency.',
       inputSchema: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: 'Task name' },
-          description: { type: 'string', description: 'Task description' },
-          dependencies: { type: 'array', items: { type: 'string' }, description: 'Task dependency IDs' },
-          parentTaskId: { type: 'string', description: 'Parent task ID for subtasks' },
-          order: { type: 'number', description: 'Order among siblings' },
-          workflowId: { type: 'string', description: 'Workflow ID - task must belong to exactly one workflow' },
-          metadata: { type: 'object', description: 'Additional metadata' }
+          tasks: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', description: 'Task name' },
+                description: { type: 'string', description: 'Task description' },
+                dependencies: { type: 'array', items: { type: 'string' }, description: 'Task dependency IDs - use positional refs like "task-1" for tasks in this batch, or existing task IDs/names' },
+                parentTaskId: { type: 'string', description: 'Parent task ID for subtasks - use positional ref like "task-1" for tasks in this batch, or existing task ID/name' },
+                order: { type: 'number', description: 'Order among siblings' },
+                status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'failed'], description: 'Task status' },
+                metadata: { type: 'object', description: 'Additional metadata' }
+              },
+              required: ['name']
+            },
+            description: 'Array of tasks to create - use positional refs (task-1, task-2) for cross-references within this batch'
+          },
+          workflowId: { type: 'string', description: 'Workflow ID - all tasks must belong to this workflow' },
+          deduplication: { type: 'string', enum: ['skip', 'error', 'overwrite'], description: 'Deduplication strategy: skip (use existing task), error (fail if duplicate exists), or overwrite (create new task anyway)' }
         },
-        required: ['name', 'workflowId']
+        required: ['tasks', 'workflowId']
       }
     },
-    handler: (args: any, service: any) => service.createTask(args)
+    handler: (args: any, service: any) => service.createTasks(args)
   },
   {
     name: 'get_task',

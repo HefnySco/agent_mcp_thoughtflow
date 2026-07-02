@@ -161,20 +161,24 @@ spawn_tot_from_task({
 
 | Category | Tools |
 |----------|-------|
-| Tasks | `create_task`, `get_task`, `list_tasks`, `update_task`, `delete_task` |
+| Tasks | `create_tasks` (batch), `get_task`, `list_tasks`, `update_task`, `delete_task` |
 | Workflows | `create_workflow`, `get_workflow`, `list_workflows`, `addTasksToWorkflow` |
 | Execution | `start_workflow_execution`, `advance_workflow_run`, `getReadyTasks` |
 | Hierarchy | `get_subtasks`, `move_task` |
 | Strategies | `create_strategy`, `get_strategy`, `list_strategies`, `add_tree_to_strategy`, `remove_tree_from_strategy` |
 | Soft-Delete | `purge_deleted`, `restore_deleted` |
 
+**Note**: Single-item task creation (`create_task`) is not available. Use `create_tasks` (batch) for all task creation. It supports positional references (task-1, task-2) for dependencies and parent-child relationships within the batch, and returns an `idMap` for mapping positional refs to real IDs.
+
 ### Tree of Thoughts Tools
 
 | Category | Tools |
 |----------|-------|
 | Trees | `create_tree`, `get_tree`, `list_trees`, `delete_tree` |
-| Thoughts | `add_idea`, `get_thought`, `evaluate_thought`, `verify_thought`, `select_thought`, `backtrack`, `prune_tree` |
+| Thoughts | `add_ideas` (batch), `get_thought`, `evaluate_thought`, `verify_thought`, `select_thought`, `backtrack`, `prune_tree` |
 | Strategies | `create_strategy`, `get_strategy`, `list_strategies`, `add_workflow_to_strategy`, `remove_workflow_from_strategy` |
+
+**Note**: Single-item idea creation (`add_idea`) is not available. Use `add_ideas` (batch) for all idea creation. It supports positional references (idea-1, idea-2) for parentId within the batch, uses fuzzy matching for robustness, and returns an `idMap` for mapping positional refs to real IDs.
 
 ### Soft-Delete & Recovery
 

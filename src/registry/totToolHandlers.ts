@@ -94,22 +94,33 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
     handler: (args: any, service: any) => service.deleteThought(args.treeId, args.thoughtId)
   },
   {
-    name: 'add_idea',
+    name: 'add_ideas',
     tool: {
-      name: 'add_idea',
-      description: 'Add a child thought to an existing thought',
+      name: 'add_ideas',
+      description: 'BATCH idea creation - use this for adding multiple related child thoughts to a tree. Single-item add_idea is NOT available. Supports positional references (idea-1, idea-2, etc.) for parentId within the batch - e.g., parentId: "idea-2" to attach to the second idea in this batch. Also supports name-based resolution for existing thoughts using fuzzy matching for robustness. Returns { thoughts: [{id, content, state}], idMap: {"idea-1": "real-id", ...} } so you can map positional refs to real IDs. All ideas must belong to the same tree. Use deduplication="skip" to reuse existing thoughts, "error" to fail on duplicates, or "overwrite" to update existing thoughts in-place (resets state to pending). This is the ONLY way to add ideas - always use batch for efficiency.',
       inputSchema: {
         type: 'object',
         properties: {
-          treeId: { type: 'string', description: 'Tree ID' },
-          parentId: { type: 'string', description: 'Parent thought ID' },
-          content: { type: 'string', description: 'Content of the child thought' },
-          metadata: { type: 'object', description: 'Additional metadata' }
+          treeId: { type: 'string', description: 'Tree ID - all ideas must belong to this tree' },
+          ideas: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                parentId: { type: 'string', description: 'Parent thought ID - use positional ref like "idea-1" for ideas in this batch, or existing thought ID/name (fuzzy matching supported)' },
+                content: { type: 'string', description: 'Content of the child thought' },
+                metadata: { type: 'object', description: 'Additional metadata' }
+              },
+              required: ['parentId', 'content']
+            },
+            description: 'Array of ideas to add - use positional refs (idea-1, idea-2) for cross-references within this batch'
+          },
+          deduplication: { type: 'string', enum: ['skip', 'error', 'overwrite'], description: 'Deduplication strategy: skip (use existing thought), error (fail if duplicate exists), or overwrite (update existing thought in-place)' }
         },
-        required: ['treeId', 'parentId', 'content']
+        required: ['treeId', 'ideas']
       }
     },
-    handler: (args: any, service: any) => service.addIdea(args.treeId, args.parentId, args.content, args.metadata)
+    handler: (args: any, service: any) => service.addIdeas(args)
   },
   {
     name: 'get_thought',

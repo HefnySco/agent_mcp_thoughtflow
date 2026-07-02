@@ -22,6 +22,11 @@ const STRATEGY_LLM_INSTRUCTION = `Strategy Usage Rules:
 - Use create_strategy as get-or-create (idempotent by normalized name).
 - Add Trees for divergent reasoning/exploration. Create or use an existing Tree before adding ideas.
 - Add Workflows for convergent execution with tasks. Create or use an existing workflow before creating tasks.
+- CRITICAL: When creating MULTIPLE related tasks or ideas, ALWAYS use batch tools:
+  * Use create_tasks (not create_task) for tasks - supports positional refs (task-1, task-2) for dependencies/parentTaskId
+  * Use add_ideas (not add_idea) for thoughts - supports positional refs (idea-1, idea-2) for parentId
+  * Single-item tools (create_task, add_idea) are NOT available.
+  * Batch tools return an idMap mapping positional refs to real IDs for later reference.
 - Promote promising thoughts to tasks. If a task blocks, spawn new Tree from it.
 - Maintain strict isolation: do not mix tasks or workflows across different Strategies.
 - Use Cognitive Bridge for provenance (link/promote/spawn).`;
@@ -119,6 +124,222 @@ export class TaskOrchestratorService extends BaseService {
     logger.info(`Created task: ${id} - ${task.name} in workflow ${task.workflowId}`);
     // Return minimal summary
     return { id, name: newTask.name, status: newTask.status } as Task;
+  }
+
+  /**
+   * Create multiple tasks in batch
+   * Supports positional references (task-1, task-2, etc.) for dependencies and parentTaskId
+   * Also supports name-based resolution
+   * Returns all tasks (minimal) + idMap mapping positional refs to real IDs
+   */
+  createTasks(params: {
+    tasks: Array<{
+      name: string;
+      description?: string;
+      dependencies?: string[];
+      parentTaskId?: string;
+      order?: number;
+      status?: Task['status'];
+      metadata?: Record<string, any>;
+    }>;
+    workflowId: string;
+    deduplication?: 'skip' | 'error' | 'overwrite';
+  }): { tasks: Array<{ id: string; name: string; status: string }>; idMap: Record<string, string> } {
+    validateRequiredString(params.workflowId, 'workflowId');
+    
+    if (!params.tasks || params.tasks.length === 0) {
+      throw new ThoughtflowError('Tasks array cannot be empty', 'INVALID_INPUT');
+    }
+
+    // Validate workflow exists
+    const workflow = this.state.workflows.get(params.workflowId);
+    if (!workflow) {
+      throw new WorkflowNotFoundError(params.workflowId);
+    }
+
+    const deduplication = params.deduplication || 'skip';
+    const idMap: Record<string, string> = {};
+    const resultTasks: Array<{ id: string; name: string; status: string }> = [];
+    const existingIds = new Set(this.state.tasks.keys());
+
+    // First pass: create/update all tasks and build idMap
+    for (let i = 0; i < params.tasks.length; i++) {
+      const taskDef = params.tasks[i];
+      const positionalRef = `task-${i + 1}`;
+      
+      validateRequiredString(taskDef.name, 'name');
+
+      // Check for deduplication by normalized name
+      const normalizedName = this.normalizeKey(taskDef.name);
+      let existingTaskId: string | null = null;
+      
+      for (const [id, task] of this.state.tasks) {
+        if (this.normalizeKey(task.name) === normalizedName && task.workflowId === params.workflowId) {
+          existingTaskId = id;
+          break;
+        }
+      }
+
+      if (existingTaskId) {
+        if (deduplication === 'error') {
+          throw new ThoughtflowError(
+            `Task with normalized name '${normalizedName}' already exists in workflow '${params.workflowId}'`,
+            'DUPLICATE_TASK'
+          );
+        } else if (deduplication === 'skip') {
+          idMap[positionalRef] = existingTaskId;
+          const existingTask = this.state.tasks.get(existingTaskId);
+          if (existingTask) {
+            resultTasks.push({ id: existingTaskId, name: existingTask.name, status: existingTask.status });
+          }
+          continue;
+        }
+        // 'overwrite' - update existing task in-place
+        const existingTask = this.state.tasks.get(existingTaskId);
+        if (existingTask) {
+          const now = new Date().toISOString();
+          existingTask.name = taskDef.name;
+          existingTask.description = taskDef.description;
+          existingTask.order = taskDef.order;
+          existingTask.status = taskDef.status || 'pending';
+          existingTask.updatedAt = now;
+          existingTask.metadata = taskDef.metadata;
+          // Reset completion fields
+          existingTask.completedAt = undefined;
+          existingTask.failedAt = undefined;
+          // Dependencies and parentTaskId will be resolved in second pass
+          this.state.tasks.set(existingTaskId, existingTask);
+          idMap[positionalRef] = existingTaskId;
+          resultTasks.push({ id: existingTaskId, name: existingTask.name, status: existingTask.status });
+          continue;
+        }
+      }
+
+      // Create new task
+      const id = this.generateSlugId(taskDef.name, existingIds);
+      existingIds.add(id);
+      idMap[positionalRef] = id;
+
+      const now = new Date().toISOString();
+      const newTask: Task = {
+        id,
+        name: taskDef.name,
+        description: taskDef.description,
+        dependencies: [], // Will resolve in second pass
+        parentTaskId: undefined, // Will resolve in second pass
+        order: taskDef.order,
+        status: taskDef.status || 'pending',
+        createdAt: now,
+        updatedAt: now,
+        workflowId: params.workflowId,
+        strategyId: workflow.strategyId,
+        metadata: taskDef.metadata
+      };
+
+      this.state.tasks.set(id, newTask);
+      
+      // Add task to workflow's taskIds
+      if (!workflow.taskIds.includes(id)) {
+        workflow.taskIds.push(id);
+      }
+
+      resultTasks.push({ id, name: newTask.name, status: newTask.status });
+    }
+
+    // Second pass: resolve positional references and name-based references
+    for (let i = 0; i < params.tasks.length; i++) {
+      const taskDef = params.tasks[i];
+      const positionalRef = `task-${i + 1}`;
+      const realId = idMap[positionalRef];
+      
+      if (!realId) continue; // Should not happen with current logic
+
+      const task = this.state.tasks.get(realId);
+      if (!task) continue;
+
+      // Resolve dependencies
+      if (taskDef.dependencies && taskDef.dependencies.length > 0) {
+        const resolvedDeps: string[] = [];
+        for (const depRef of taskDef.dependencies) {
+          const resolvedId = this.resolveTaskReference(depRef, idMap, params.workflowId);
+          if (!resolvedId) {
+            throw new ThoughtflowError(
+              `Cannot resolve dependency reference '${depRef}' for task '${task.name}'`,
+              'DEPENDENCY_NOT_FOUND'
+            );
+          }
+          resolvedDeps.push(resolvedId);
+        }
+        task.dependencies = resolvedDeps;
+      }
+
+      // Resolve parentTaskId
+      if (taskDef.parentTaskId) {
+        const resolvedParentId = this.resolveTaskReference(taskDef.parentTaskId, idMap, params.workflowId);
+        if (!resolvedParentId) {
+          throw new ThoughtflowError(
+            `Cannot resolve parentTaskId reference '${taskDef.parentTaskId}' for task '${task.name}'`,
+            'PARENT_NOT_FOUND'
+          );
+        }
+        
+        // Validate parent exists and is in same workflow
+        const parentTask = this.state.tasks.get(resolvedParentId);
+        if (!parentTask) {
+          throw new TaskNotFoundError(resolvedParentId);
+        }
+        if (parentTask.workflowId !== params.workflowId) {
+          throw new ThoughtflowError(
+            `Parent task '${resolvedParentId}' belongs to workflow '${parentTask.workflowId}', cannot create subtask in different workflow '${params.workflowId}'`,
+            'WORKFLOW_BOUNDARY_VIOLATION'
+          );
+        }
+        
+        task.parentTaskId = resolvedParentId;
+      }
+
+      this.state.tasks.set(realId, task);
+    }
+
+    workflow.updatedAt = new Date().toISOString();
+    this.state.workflows.set(params.workflowId, workflow);
+    this.triggerSave();
+    
+    logger.info(`Processed ${resultTasks.length} tasks in batch for workflow ${params.workflowId}`);
+    
+    return { tasks: resultTasks, idMap };
+  }
+
+  /**
+   * Resolve a task reference (positional or name-based) to a real task ID
+   */
+  private resolveTaskReference(
+    ref: string,
+    idMap: Record<string, string>,
+    workflowId: string
+  ): string | null {
+    // Check if it's a positional reference (task-1, task-2, etc.)
+    if (ref.startsWith('task-')) {
+      return idMap[ref] || null;
+    }
+
+    // Try to find by exact ID match
+    if (this.state.tasks.has(ref)) {
+      const task = this.state.tasks.get(ref);
+      if (task && task.workflowId === workflowId) {
+        return ref;
+      }
+    }
+
+    // Try to find by normalized name within the workflow
+    const normalizedName = this.normalizeKey(ref);
+    for (const [id, task] of this.state.tasks) {
+      if (this.normalizeKey(task.name) === normalizedName && task.workflowId === workflowId) {
+        return id;
+      }
+    }
+
+    return null;
   }
 
   /**

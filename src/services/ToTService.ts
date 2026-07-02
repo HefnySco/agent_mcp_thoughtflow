@@ -76,6 +76,11 @@ const STRATEGY_LLM_INSTRUCTION = `Strategy Usage Rules:
 - Use create_strategy as get-or-create (idempotent by normalized name).
 - Add Trees for divergent reasoning/exploration. Create or use an existing Tree before adding ideas.
 - Add Workflows for convergent execution with tasks. Create or use an existing workflow before creating tasks.
+- CRITICAL: When creating MULTIPLE related tasks or ideas, ALWAYS use batch tools:
+  * Use create_tasks (not create_task) for tasks - supports positional refs (task-1, task-2) for dependencies/parentTaskId
+  * Use add_ideas (not add_idea) for thoughts - supports positional refs (idea-1, idea-2) for parentId
+  * Single-item tools (create_task, add_idea) are NOT available.
+  * Batch tools return an idMap mapping positional refs to real IDs for later reference.
 - Promote promising thoughts to tasks. If a task blocks, spawn new Tree from it.
 - Maintain strict isolation: do not mix tasks or workflows across different Strategies.
 - Use Cognitive Bridge for provenance (link/promote/spawn).`;
@@ -459,6 +464,206 @@ export class ToTService extends BaseService {
    */
   addIdea(treeId: string, parentId: string, content: string, metadata?: Record<string, any>): Thought {
     return this.addChildThought({ treeId, parentId, content, metadata });
+  }
+
+  /**
+   * Add multiple child thoughts in batch
+   * Supports positional references (idea-1, idea-2, etc.) for parentId
+   * Uses fuzzy matching (findThoughtRobustly) for robustness
+   * Returns all thoughts (minimal) + idMap mapping positional refs to real IDs
+   */
+  addIdeas(params: {
+    treeId: string;
+    ideas: Array<{
+      parentId: string;
+      content: string;
+      metadata?: Record<string, any>;
+    }>;
+    deduplication?: 'skip' | 'error' | 'overwrite';
+  }): { thoughts: Array<{ id: string; content: string; state: string }>; idMap: Record<string, string> } {
+    validateRequiredString(params.treeId, 'treeId');
+    
+    if (!params.ideas || params.ideas.length === 0) {
+      throw new ThoughtflowError('Ideas array cannot be empty', 'INVALID_INPUT');
+    }
+
+    const tree = this.getTreeFull(params.treeId);
+    const deduplication = params.deduplication || 'skip';
+    const idMap: Record<string, string> = {};
+    const resultThoughts: Array<{ id: string; content: string; state: string }> = [];
+    const existingThoughtIds = new Set(tree.thoughts.keys());
+
+    // First pass: create/update all thoughts and build idMap
+    for (let i = 0; i < params.ideas.length; i++) {
+      const ideaDef = params.ideas[i];
+      const positionalRef = `idea-${i + 1}`;
+      
+      validateRequiredString(ideaDef.content, 'content');
+      validateRequiredString(ideaDef.parentId, 'parentId');
+
+      // Check for deduplication by normalized content
+      const normalizedContent = this.normalizeKey(ideaDef.content);
+      let existingThoughtId: string | null = null;
+      
+      for (const [id, thought] of tree.thoughts) {
+        if (this.normalizeKey(thought.content) === normalizedContent) {
+          existingThoughtId = id;
+          break;
+        }
+      }
+
+      if (existingThoughtId) {
+        if (deduplication === 'error') {
+          throw new ThoughtflowError(
+            `Thought with normalized content '${normalizedContent}' already exists in tree '${params.treeId}'`,
+            'DUPLICATE_THOUGHT'
+          );
+        } else if (deduplication === 'skip') {
+          idMap[positionalRef] = existingThoughtId;
+          const existingThought = tree.thoughts.get(existingThoughtId);
+          if (existingThought) {
+            resultThoughts.push({ id: existingThoughtId, content: existingThought.content, state: existingThought.state });
+          }
+          continue;
+        }
+        // 'overwrite' - update existing thought in-place
+        const existingThought = tree.thoughts.get(existingThoughtId);
+        if (existingThought) {
+          const now = new Date().toISOString();
+          existingThought.content = ideaDef.content;
+          existingThought.state = 'pending';
+          existingThought.updatedAt = now;
+          existingThought.metadata = ideaDef.metadata || {};
+          // Reset evaluation fields
+          existingThought.evaluation = null;
+          existingThought.verified = false;
+          existingThought.verificationNotes = undefined;
+          // Parent will be resolved in second pass
+          tree.thoughts.set(existingThoughtId, existingThought);
+          idMap[positionalRef] = existingThoughtId;
+          resultThoughts.push({ id: existingThoughtId, content: existingThought.content, state: existingThought.state });
+          continue;
+        }
+      }
+
+      // Resolve parent reference (positional or name-based)
+      const resolvedParentId = this.resolveThoughtReference(ideaDef.parentId, idMap, tree);
+      if (!resolvedParentId) {
+        throw new ThoughtNotFoundError(
+          params.treeId,
+          `Cannot resolve parentId reference '${ideaDef.parentId}' for idea at position ${i + 1}`
+        );
+      }
+
+      // Get parent thought and validate depth
+      const parentResult = this.findThoughtRobustly(params.treeId, resolvedParentId);
+      const parentThought = parentResult?.thought || tree.thoughts.get(resolvedParentId);
+      
+      if (!parentThought) {
+        throw new ThoughtNotFoundError(params.treeId, resolvedParentId);
+      }
+      
+      if (parentThought.depth >= tree.maxDepth) {
+        throw new ValidationError(`Maximum depth reached for tree ${params.treeId}`, 'depth');
+      }
+
+      // Create new thought
+      const childId = this.generateSlugId(ideaDef.content, existingThoughtIds);
+      existingThoughtIds.add(childId);
+      idMap[positionalRef] = childId;
+
+      const now = new Date().toISOString();
+      const childThought: Thought = {
+        id: childId,
+        content: ideaDef.content,
+        parentId: resolvedParentId,
+        children: [],
+        evaluation: null,
+        state: 'pending',
+        depth: parentThought.depth + 1,
+        createdAt: now,
+        updatedAt: now,
+        metadata: ideaDef.metadata || {}
+      };
+
+      tree.thoughts.set(childId, childThought);
+      parentThought.children.push(childId);
+      tree.updatedAt = now;
+
+      resultThoughts.push({ id: childId, content: ideaDef.content, state: 'pending' });
+    }
+
+    // Second pass: resolve parent references for overwritten thoughts
+    for (let i = 0; i < params.ideas.length; i++) {
+      const ideaDef = params.ideas[i];
+      const positionalRef = `idea-${i + 1}`;
+      const realId = idMap[positionalRef];
+      
+      if (!realId) continue; // Should not happen with current logic
+
+      const thought = tree.thoughts.get(realId);
+      if (!thought) continue;
+
+      // If this is an overwritten thought, re-resolve its parent
+      if (thought.parentId === undefined && ideaDef.parentId) {
+        const resolvedParentId = this.resolveThoughtReference(ideaDef.parentId, idMap, tree);
+        if (!resolvedParentId) {
+          throw new ThoughtNotFoundError(
+            params.treeId,
+            `Cannot resolve parentId reference '${ideaDef.parentId}' for idea at position ${i + 1}`
+          );
+        }
+
+        const parentResult = this.findThoughtRobustly(params.treeId, resolvedParentId);
+        const parentThought = parentResult?.thought || tree.thoughts.get(resolvedParentId);
+        
+        if (!parentThought) {
+          throw new ThoughtNotFoundError(params.treeId, resolvedParentId);
+        }
+        
+        if (parentThought.depth >= tree.maxDepth) {
+          throw new ValidationError(`Maximum depth reached for tree ${params.treeId}`, 'depth');
+        }
+
+        thought.parentId = resolvedParentId;
+        thought.depth = parentThought.depth + 1;
+        
+        // Add to parent's children if not already there
+        if (!parentThought.children.includes(realId)) {
+          parentThought.children.push(realId);
+        }
+        
+        tree.thoughts.set(realId, thought);
+      }
+    }
+
+    this.triggerSave();
+    logger.info(`Processed ${resultThoughts.length} child thoughts in batch for tree ${params.treeId}`);
+    
+    return { thoughts: resultThoughts, idMap };
+  }
+
+  /**
+   * Resolve a thought reference (positional or name-based) to a real thought ID
+   * Uses fuzzy matching for robustness
+   */
+  private resolveThoughtReference(
+    ref: string,
+    idMap: Record<string, string>,
+    tree: Tree
+  ): string | null {
+    // Check if it's a positional reference (idea-1, idea-2, etc.)
+    if (ref.startsWith('idea-')) {
+      return idMap[ref] || null;
+    }
+
+    // Use robust lookup for existing thoughts
+    const result = this.findThoughtRobustly(tree.id, ref);
+    if (result) {
+      return result.thought.id;
+    }
+
+    return null;
   }
 
   /**
