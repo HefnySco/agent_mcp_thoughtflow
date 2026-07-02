@@ -1000,12 +1000,13 @@ export class TaskOrchestratorService extends BaseService {
   /**
    * Start execution of a workflow
    * Creates a workflow run and marks initially ready tasks as in_progress
-   * Returns minimal task summaries to save tokens
+   * Returns minimal task identifiers (id + status only) for maximum token efficiency
+   * Use get_task() when you need full task details like name/description
    */
   startWorkflowExecution(workflowId: string): {
     runId: string;
     workflowStatus: 'in_progress' | 'completed' | 'failed';
-    readyTasks: Array<{ id: string; name: string; status: string }>;
+    readyTasks: Array<{ id: string; status: string }>;
     totalTasks: number;
     readyCount: number;
   } {
@@ -1043,8 +1044,8 @@ export class TaskOrchestratorService extends BaseService {
     this.triggerSave();
     logger.info(`Started workflow execution: ${runId} for workflow: ${workflowId}`);
 
-    // Return minimal task summaries with summary counts
-    const readyTaskSummaries = readyTasks.map(t => ({ id: t.id, name: t.name, status: 'in_progress' }));
+    // Return minimal task identifiers (id + status only) for maximum token efficiency
+    const readyTaskSummaries = readyTasks.map(t => ({ id: t.id, status: 'in_progress' }));
     return {
       runId,
       workflowStatus: 'in_progress',
@@ -1057,12 +1058,14 @@ export class TaskOrchestratorService extends BaseService {
   /**
    * Advance a workflow run after task completion
    * Returns deltas (newly completed/failed/ready tasks) instead of accumulated state
-   * This saves tokens by not re-listing all previously completed tasks
+   * Returns minimal task identifiers (id + status only) for maximum token efficiency
+   * Use get_task() when you need full task details like name/description
+   * Use get_workflow_run_status() when you want the complete current state of the whole workflow
    */
   advanceWorkflowRun(runId: string): {
-    newlyCompletedTasks: Array<{ id: string; name: string; status: string }>;
-    newlyFailedTasks: Array<{ id: string; name: string; status: string }>;
-    newlyReadyTasks: Array<{ id: string; name: string; status: string }>;
+    newlyCompletedTasks: Array<{ id: string; status: string }>;
+    newlyFailedTasks: Array<{ id: string; status: string }>;
+    newlyReadyTasks: Array<{ id: string; status: string }>;
     workflowStatus: 'in_progress' | 'completed' | 'failed';
     cognitiveSuggestions?: Array<{ type: string; thoughtId: string; reason: string }>;
   } {
@@ -1147,15 +1150,15 @@ export class TaskOrchestratorService extends BaseService {
 
     logger.info(`Advanced workflow run: ${runId}, status: ${workflowStatus}, newlyCompleted: ${newlyCompletedTasks.length}, newlyReady: ${newlyReadyTasks.length}`);
 
-    // Return minimal task summaries (deltas only)
-    const newlyCompletedTaskSummaries = newlyCompletedTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
-    const newlyFailedTaskSummaries = newlyFailedTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
-    const newlyReadyTaskSummaries = newlyReadyTasks.map(t => ({ id: t.id, name: t.name, status: t.status }));
+    // Return minimal task identifiers (id + status only) for maximum token efficiency
+    const newlyCompletedTaskSummaries = newlyCompletedTasks.map(t => ({ id: t.id, status: t.status }));
+    const newlyFailedTaskSummaries = newlyFailedTasks.map(t => ({ id: t.id, status: t.status }));
+    const newlyReadyTaskSummaries = newlyReadyTasks.map(t => ({ id: t.id, status: t.status }));
 
     const result: {
-      newlyCompletedTasks: Array<{ id: string; name: string; status: string }>;
-      newlyFailedTasks: Array<{ id: string; name: string; status: string }>;
-      newlyReadyTasks: Array<{ id: string; name: string; status: string }>;
+      newlyCompletedTasks: Array<{ id: string; status: string }>;
+      newlyFailedTasks: Array<{ id: string; status: string }>;
+      newlyReadyTasks: Array<{ id: string; status: string }>;
       workflowStatus: 'in_progress' | 'completed' | 'failed';
       cognitiveSuggestions?: Array<{ type: string; thoughtId: string; reason: string }>;
     } = {

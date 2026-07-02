@@ -298,7 +298,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'start_workflow_execution',
     tool: {
       name: 'start_workflow_execution',
-      description: 'Start execution of a workflow. Returns runId, workflowStatus, readyTasks (minimal summaries), totalTasks, and readyCount. IMPORTANT: You must manually execute the ready tasks, update their status to completed, and call advance_workflow_run to progress. Use get_workflow_run_status when you need the complete picture of all tasks.',
+      description: 'Start execution of a workflow. Returns runId, workflowStatus, readyTasks (minimal: id + status only), totalTasks, and readyCount. IMPORTANT: readyTasks contains only task identifiers (id + status) for maximum token efficiency. Use get_task() when you need full task details like name/description. You must manually execute the ready tasks, update their status to completed, and call advance_workflow_run to progress. Use get_workflow_run_status when you need the complete picture of all tasks.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -313,7 +313,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'advance_workflow_run',
     tool: {
       name: 'advance_workflow_run',
-      description: 'Advance a workflow run after completing tasks. Returns deltas: newlyCompletedTasks, newlyFailedTasks, newlyReadyTasks (all minimal summaries), and workflowStatus. This is token-efficient - it does NOT re-list all previously completed tasks. Call this AFTER you have updated ready tasks to completed. Use get_workflow_run_status when you need the complete picture of all tasks.',
+      description: 'Advance a workflow run after completing tasks. Returns deltas: newlyCompletedTasks, newlyFailedTasks, newlyReadyTasks (all minimal: id + status only), and workflowStatus. This is token-efficient - it does NOT re-list all previously completed tasks. Task arrays contain only identifiers (id + status) for maximum token efficiency. Use get_task() when you need full task details like name/description. Call this AFTER you have updated ready tasks to completed. Use get_workflow_run_status when you need the complete picture of all tasks.',
       inputSchema: {
         type: 'object',
         properties: {
