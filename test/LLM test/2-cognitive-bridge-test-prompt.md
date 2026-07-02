@@ -10,42 +10,23 @@ Test the MCP thoughtflow cognitive bridge functionality to ensure task dependenc
 - Restart the MCP server to ensure clean state
 
 ### 2. Test Task Dependencies
-Create tasks with execution ordering dependencies:
+Create tasks with execution ordering dependencies using batch creation:
 
-**Prerequisite Task:**
-- Name: "Prerequisite Task"
-- Description: "Task that must complete first"
-- Status: pending
-
-**Dependent Task:**
-- Name: "Dependent Task"
-- Description: "Task that depends on prerequisite"
-- Status: pending
-- Dependencies: ["prerequisite-task-id"]
+**Use create_tasks (batch):**
+- Task 1: "Prerequisite Task" - Description: "Task that must complete first" - Status: pending
+- Task 2: "Dependent Task" - Description: "Task that depends on prerequisite" - Status: pending - Dependencies: ["task-1"]
 
 **Verify:**
 - Dependent task has dependencies array with prerequisite task ID
 - Used for workflow execution DAG scheduling
 
 ### 3. Test Parent-Child Task Relationships
-Create hierarchical task organization:
+Create hierarchical task organization using batch creation with positional references:
 
-**Parent Task:**
-- Name: "Parent Task"
-- Description: "A parent task that will have subtasks"
-- Status: pending
-
-**Subtask 1:**
-- Name: "Subtask 1"
-- Description: "First subtask under parent"
-- Status: pending
-- Move under parent task using `move_task`
-
-**Subtask 2:**
-- Name: "Subtask 2"
-- Description: "Second subtask under parent"
-- Status: pending
-- Move under parent task using `move_task`
+**Use create_tasks (batch):**
+- Task 1: "Parent Task" - Description: "A parent task that will have subtasks" - Status: pending
+- Task 2: "Subtask 1" - Description: "First subtask under parent" - Status: pending - parentTaskId: "task-1"
+- Task 3: "Subtask 2" - Description: "Second subtask under parent" - Status: pending - parentTaskId: "task-1"
 
 **Verify:**
 - Subtasks have `parentTaskId` pointing to parent task
@@ -100,7 +81,32 @@ Create reasoning trees from blocked tasks:
 - Tree metadata includes `sourceTaskId` and `spawnedAt`
 - Cognitive link created of type "task_to_thought"
 
-### 6. Verify Persistence
+### 6. Test Sync Status Management
+Test sync status transitions as per cognitive-linking.md:
+
+**Initial State:**
+- Link thought to task using `link_thought_to_task`
+- Verify sync status is "synced"
+
+**Update One Side:**
+- Update task description using `update_task`
+- Verify sync status changes to "outdated"
+
+**Update Both Sides:**
+- Update thought content using `add_ideas` or evaluation while task is "outdated"
+- Verify sync status changes to "conflict"
+
+**Reconcile:**
+- Manually reconcile changes by updating sync status
+- Update sync status back to "synced"
+
+**Verify:**
+- Sync status transitions work correctly (synced → outdated → conflict → synced)
+- System tracks when entities diverge
+- Conflict state is detected when both sides change
+- Agents must manually manage sync status
+
+### 7. Verify Persistence
 - Wait 1-2 seconds for debounced save to complete
 - Check the `thoughtflow-state.json` file in the project directory
 - Verify all cognitive bridge operations persisted:
@@ -127,6 +133,8 @@ Create reasoning trees from blocked tasks:
 4. **Spawning metadata missing**: Tasks don't have `explorationTreeIds` or trees don't have `sourceTaskId`
 5. **Cognitive links not created**: Missing entries in `cognitiveLinks` section
 6. **Bidirectional sync broken**: One side has metadata but the other doesn't
+7. **Sync status not updating**: Sync status doesn't change when entities are updated
+8. **Conflict not detected**: System doesn't detect when both sides change without reconciliation
 
 ## Key Differences
 

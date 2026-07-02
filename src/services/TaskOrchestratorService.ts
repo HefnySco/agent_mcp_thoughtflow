@@ -40,6 +40,13 @@ export class TaskOrchestratorService extends BaseService {
   }
 
   /**
+   * Get guidance for resolving task references
+   */
+  private getTaskReferenceGuidance(): string {
+    return " Tip: Use positional refs like 'task-1' for tasks in the same batch, or the actual task ID. Name-based resolution is supported.";
+  }
+
+  /**
    * Create a new task
    * REQUIRES workflowId - task must belong to exactly one workflow
    */
@@ -264,7 +271,7 @@ export class TaskOrchestratorService extends BaseService {
           const resolvedId = this.resolveTaskReference(depRef, idMap, params.workflowId);
           if (!resolvedId) {
             throw new ThoughtflowError(
-              `Cannot resolve dependency reference '${depRef}' for task '${task.name}'`,
+              `Cannot resolve dependency reference '${depRef}' for task '${task.name}'.${this.getTaskReferenceGuidance()}`,
               'DEPENDENCY_NOT_FOUND'
             );
           }
@@ -278,7 +285,7 @@ export class TaskOrchestratorService extends BaseService {
         const resolvedParentId = this.resolveTaskReference(taskDef.parentTaskId, idMap, params.workflowId);
         if (!resolvedParentId) {
           throw new ThoughtflowError(
-            `Cannot resolve parentTaskId reference '${taskDef.parentTaskId}' for task '${task.name}'`,
+            `Cannot resolve parentTaskId reference '${taskDef.parentTaskId}' for task '${task.name}'.${this.getTaskReferenceGuidance()}`,
             'PARENT_NOT_FOUND'
           );
         }

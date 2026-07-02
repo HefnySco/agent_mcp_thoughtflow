@@ -81,9 +81,12 @@ const STRATEGY_LLM_INSTRUCTION = `Strategy Usage Rules:
   * Use add_ideas (not add_idea) for thoughts - supports positional refs (idea-1, idea-2) for parentId
   * Single-item tools (create_task, add_idea) are NOT available.
   * Batch tools return an idMap mapping positional refs to real IDs for later reference.
+- When adding ideas to a tree, use parentId: 'root' or the actual rootId returned when the tree was created.
+- When adding child ideas, prefer parentId: 'root' for the tree root.
 - Promote promising thoughts to tasks. If a task blocks, spawn new Tree from it.
 - Maintain strict isolation: do not mix tasks or workflows across different Strategies.
-- Use Cognitive Bridge for provenance (link/promote/spawn).`;
+- Use Cognitive Bridge for provenance (link/promote/spawn).
+- CRITICAL: When using evaluate_thought, the score parameter MUST be a numeric value between 0 and 100 (not a string). Always pass score as a number type.`;
 
 export interface ToTServiceConfig {
   llmProvider?: LLMProvider | null;
@@ -396,6 +399,7 @@ export class ToTService extends BaseService {
 
   /**
    * Add a child thought to an existing thought
+   * Supports magic "root" or "rootId" to resolve to tree.rootId
    */
   addChildThought(params: {
     treeId: string;
@@ -406,21 +410,27 @@ export class ToTService extends BaseService {
     validateRequiredString(params.treeId, 'treeId');
     validateRequiredString(params.parentId, 'parentId');
     validateRequiredString(params.content, 'content');
-    
+
     const tree = this.getTreeFull(params.treeId);
-    
+
+    // Resolve magic "root" or "rootId" to tree.rootId
+    let resolvedParentId = params.parentId;
+    if (params.parentId === 'root' || params.parentId === 'rootId') {
+      resolvedParentId = tree.rootId;
+    }
+
     // Use robust lookup for parent thought
-    const parentResult = this.findThoughtRobustly(params.treeId, params.parentId);
-    const parentThought = parentResult?.thought || tree.thoughts.get(params.parentId);
-    
+    const parentResult = this.findThoughtRobustly(params.treeId, resolvedParentId);
+    const parentThought = parentResult?.thought || tree.thoughts.get(resolvedParentId);
+
     if (!parentThought) {
       // Provide helpful error message with closest matches
       const treeThoughtIds = Array.from(tree.thoughts.keys());
-      const closeMatches = findClosestMatches(params.parentId, treeThoughtIds, 3);
-      const matchInfo = closeMatches.length > 0 
+      const closeMatches = findClosestMatches(resolvedParentId, treeThoughtIds, 3);
+      const matchInfo = closeMatches.length > 0
         ? ` Did you mean: ${closeMatches.map(m => `'${m.id}'`).join(', ')}?`
         : '';
-      throw new ThoughtNotFoundError(params.treeId, `${params.parentId}${matchInfo}`);
+      throw new ThoughtNotFoundError(params.treeId, `${resolvedParentId}${matchInfo}.${this.getParentResolutionGuidance()}`);
     }
     
     if (parentThought.depth >= tree.maxDepth) {
@@ -551,7 +561,7 @@ export class ToTService extends BaseService {
       if (!resolvedParentId) {
         throw new ThoughtNotFoundError(
           params.treeId,
-          `Cannot resolve parentId reference '${ideaDef.parentId}' for idea at position ${i + 1}`
+          `Cannot resolve parentId reference '${ideaDef.parentId}' for idea at position ${i + 1}.${this.getParentResolutionGuidance()}`
         );
       }
 
@@ -610,7 +620,7 @@ export class ToTService extends BaseService {
         if (!resolvedParentId) {
           throw new ThoughtNotFoundError(
             params.treeId,
-            `Cannot resolve parentId reference '${ideaDef.parentId}' for idea at position ${i + 1}`
+            `Cannot resolve parentId reference '${ideaDef.parentId}' for idea at position ${i + 1}.${this.getParentResolutionGuidance()}`
           );
         }
 
@@ -644,14 +654,27 @@ export class ToTService extends BaseService {
   }
 
   /**
+   * Get guidance for resolving parent references
+   */
+  private getParentResolutionGuidance(): string {
+    return " Tip: Use parentId: 'root' for the tree root, positional refs like 'idea-2' for ideas in the same batch, or the actual thought ID. Fuzzy matching is supported.";
+  }
+
+  /**
    * Resolve a thought reference (positional or name-based) to a real thought ID
    * Uses fuzzy matching for robustness
+   * Supports magic "root" or "rootId" to resolve to tree.rootId
    */
   private resolveThoughtReference(
     ref: string,
     idMap: Record<string, string>,
     tree: Tree
   ): string | null {
+    // Check for magic "root" or "rootId" references
+    if (ref === 'root' || ref === 'rootId') {
+      return tree.rootId;
+    }
+
     // Check if it's a positional reference (idea-1, idea-2, etc.)
     if (ref.startsWith('idea-')) {
       return idMap[ref] || null;

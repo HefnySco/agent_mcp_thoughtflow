@@ -121,7 +121,38 @@ Use `verify_thought` to confirm a thought's findings:
 - Verification notes are stored
 - Can be used to track confirmed solutions
 
-### 10. Verify Persistence
+### 10. Test Auto-Evaluation of Parent Thoughts
+Test automatic parent evaluation when all children are evaluated (from ideas-rules.md):
+
+**Create Parent with Children:**
+- Create a parent thought: "Caching strategy"
+- Add 3 child thoughts using batch creation:
+  - Child 1: "In-memory cache"
+  - Child 2: "Redis backend"
+  - Child 3: "Invalidation logic"
+
+**Evaluate Children Individually:**
+- Evaluate Child 1 with score 80
+- Evaluate Child 2 with score 90
+- Verify parent is still pending (not all children evaluated yet)
+
+**Evaluate Last Child:**
+- Evaluate Child 3 with score 85
+- Verify parent automatically becomes evaluated
+- Verify parent's score is average: (80 + 90 + 85) / 3 = 85
+- Verify parent's updatedAt timestamp is updated
+
+**Test Recursive Propagation:**
+- If parent has a grandparent, verify grandparent is also checked
+- Verify evaluation propagates up the hierarchy
+
+**Verify:**
+- Parent auto-evaluates when all children are evaluated
+- Parent score is average of children's scores
+- Propagation works recursively up the tree
+- Timestamps are updated correctly
+
+### 11. Verify Persistence
 - Wait 1-2 seconds for debounced save to complete
 - Check the `thoughtflow-state.json` file
 - Verify all evaluation data persisted:
@@ -153,6 +184,8 @@ Use `verify_thought` to confirm a thought's findings:
 6. **Backtracking incomplete**: Descendants not pruned
 7. **Verification not stored**: Verification notes not saved
 8. **State corruption**: Evaluation state inconsistent after operations
+9. **Auto-evaluation not working**: Parent doesn't auto-evaluate when all children are evaluated
+10. **Score averaging wrong**: Parent score not calculated as average of children
 
 ## Test Commands
 
