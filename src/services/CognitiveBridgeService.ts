@@ -155,13 +155,60 @@ export class CognitiveBridgeService extends BaseService {
     this.triggerSave();
     
     logger.info(`Promoted ${thoughtsToPromote.length} thoughts to ${taskIds.length} tasks in workflow ${params.workflowId}`);
-    
+
+    // After successful promotion, mark thoughts as selected/verified
+    this.markThoughtsAsPromoted(tree, thoughtsToPromote, taskIds, now);
+
     return {
       taskIds,
       workflowId: params.workflowId,
       thoughtsPromoted: thoughtsToPromote.length,
       hierarchyPreserved: !flattenHierarchy
     };
+  }
+
+  /**
+   * Mark thoughts as selected and verified after promotion
+   * This ensures promoted thoughts are no longer in pending state
+   */
+  private markThoughtsAsPromoted(
+    tree: Tree,
+    thoughtsToPromote: Thought[],
+    promotedTaskIds: string[],
+    promotedAt: string
+  ): void {
+    for (const thoughtToPromote of thoughtsToPromote) {
+      // Auto-evaluate if no score exists
+      if (thoughtToPromote.evaluation === null) {
+        thoughtToPromote.evaluation = 88; // High default score (85-90 range)
+        thoughtToPromote.state = 'evaluated';
+        thoughtToPromote.metadata = thoughtToPromote.metadata || {};
+        thoughtToPromote.metadata.evaluationReasoning = 'Thought promoted to executable tasks via Cognitive Bridge';
+        logger.info(`Thought ${thoughtToPromote.id} auto-evaluated with score 88 during promotion`);
+      }
+      
+      // Change state to selected (bypassing child evaluation check for promoted thoughts)
+      thoughtToPromote.state = 'selected';
+      
+      // Mark as verified
+      thoughtToPromote.verified = true;
+      thoughtToPromote.verificationNotes = 'Promoted to tasks. Full provenance stored in task.metadata.cognitive and cognitiveLinks.';
+      
+      // Update cognitive metadata with promotion details
+      this.preserveCognitiveMetadata(thoughtToPromote);
+      thoughtToPromote.metadata = thoughtToPromote.metadata || {};
+      thoughtToPromote.metadata.cognitive = thoughtToPromote.metadata.cognitive || {};
+      const thoughtCognitive = thoughtToPromote.metadata.cognitive as CognitiveMetadata;
+      thoughtCognitive.promotedAt = promotedAt;
+      thoughtCognitive.promotedToTaskIds = promotedTaskIds;
+      thoughtCognitive.promotionReason = 'Thought promoted to executable tasks via Cognitive Bridge';
+      
+      logger.info(`Thought ${thoughtToPromote.id} promoted to tasks → state changed to selected + verified`);
+    }
+    
+    // Update tree timestamp to ensure changes are visible immediately
+    tree.updatedAt = promotedAt;
+    this.triggerSave();
   }
 
   /**

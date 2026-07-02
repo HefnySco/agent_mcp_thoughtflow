@@ -246,6 +246,158 @@ describe('CognitiveBridgeService', () => {
         });
       }, /Thought/);
     });
+
+    it('should mark thought as selected and verified after promotion', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy State Change',
+        description: 'Test strategy for state change test'
+      });
+
+      const tree = totService.createTree({
+        goal: 'Test goal state change',
+        rootContent: 'Root thought',
+        strategyId: strategy.id
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow State Change',
+        description: 'Test workflow for state change test',
+        taskIds: [],
+        strategyId: strategy.id
+      });
+
+      // Verify initial state is pending
+      const initialThought = (totService as any).getThoughtFull(tree.id, tree.rootId);
+      assert.strictEqual(initialThought.state, 'pending');
+      assert.strictEqual(initialThought.evaluation, null);
+      assert.strictEqual(initialThought.verified, undefined);
+
+      // Promote thought to tasks
+      const result = bridgeService.promoteThoughtToTasks({
+        treeId: tree.id,
+        thoughtId: tree.rootId,
+        workflowId: workflow.id
+      });
+
+      // Verify thought state changed to selected and verified
+      const promotedThought = (totService as any).getThoughtFull(tree.id, tree.rootId);
+      assert.strictEqual(promotedThought.state, 'selected');
+      assert.strictEqual(promotedThought.verified, true);
+      assert.strictEqual(promotedThought.verificationNotes, 'Promoted to tasks. Full provenance stored in task.metadata.cognitive and cognitiveLinks.');
+      
+      // Verify auto-evaluation happened
+      assert.strictEqual(promotedThought.evaluation, 88);
+      assert.strictEqual(promotedThought.metadata?.evaluationReasoning, 'Thought promoted to executable tasks via Cognitive Bridge');
+
+      // Verify cognitive metadata has promotion details
+      assert.ok(promotedThought.metadata?.cognitive?.promotedAt);
+      assert.deepStrictEqual(promotedThought.metadata?.cognitive?.promotedToTaskIds, result.taskIds);
+      assert.strictEqual(promotedThought.metadata?.cognitive?.promotionReason, 'Thought promoted to executable tasks via Cognitive Bridge');
+    });
+
+    it('should mark subtree thoughts as selected and verified after promotion', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Subtree State',
+        description: 'Test strategy for subtree state test'
+      });
+
+      const tree = totService.createTree({
+        goal: 'Test goal subtree state',
+        rootContent: 'Root',
+        strategyId: strategy.id
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow Subtree State',
+        description: 'Test workflow for subtree state test',
+        taskIds: [],
+        strategyId: strategy.id
+      });
+
+      // Add child thoughts
+      const child1 = totService.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const child2 = totService.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      // Promote subtree to tasks
+      const result = bridgeService.promoteThoughtToTasks({
+        treeId: tree.id,
+        thoughtId: tree.rootId,
+        includeDescendants: true,
+        workflowId: workflow.id
+      });
+
+      // Verify all thoughts are marked as selected and verified
+      const rootThought = (totService as any).getThoughtFull(tree.id, tree.rootId);
+      assert.strictEqual(rootThought.state, 'selected');
+      assert.strictEqual(rootThought.verified, true);
+
+      const promotedChild1 = (totService as any).getThoughtFull(tree.id, child1.id);
+      assert.strictEqual(promotedChild1.state, 'selected');
+      assert.strictEqual(promotedChild1.verified, true);
+
+      const promotedChild2 = (totService as any).getThoughtFull(tree.id, child2.id);
+      assert.strictEqual(promotedChild2.state, 'selected');
+      assert.strictEqual(promotedChild2.verified, true);
+
+      // Verify all have auto-evaluation
+      assert.strictEqual(rootThought.evaluation, 88);
+      assert.strictEqual(promotedChild1.evaluation, 88);
+      assert.strictEqual(promotedChild2.evaluation, 88);
+    });
+
+    it('should preserve existing evaluation when promoting already evaluated thought', async () => {
+      // Create strategy and workflow for hierarchy
+      const strategy = taskService.createStrategy({
+        name: 'Test Strategy Preserve Eval',
+        description: 'Test strategy for preserve evaluation test'
+      });
+
+      const tree = totService.createTree({
+        goal: 'Test goal preserve eval',
+        rootContent: 'Root thought',
+        strategyId: strategy.id
+      });
+
+      const workflow = taskService.createWorkflow({
+        name: 'Test Workflow Preserve Eval',
+        description: 'Test workflow for preserve evaluation test',
+        taskIds: [],
+        strategyId: strategy.id
+      });
+
+      // Evaluate the thought first with a custom score
+      totService.evaluateThought({
+        treeId: tree.id,
+        thoughtId: tree.rootId,
+        score: 75,
+        reasoning: 'Custom evaluation before promotion'
+      });
+
+      // Promote thought to tasks
+      const result = bridgeService.promoteThoughtToTasks({
+        treeId: tree.id,
+        thoughtId: tree.rootId,
+        workflowId: workflow.id
+      });
+
+      // Verify thought state changed but evaluation was preserved
+      const promotedThought = (totService as any).getThoughtFull(tree.id, tree.rootId);
+      assert.strictEqual(promotedThought.state, 'selected');
+      assert.strictEqual(promotedThought.verified, true);
+      assert.strictEqual(promotedThought.evaluation, 75); // Should preserve original score
+      assert.strictEqual(promotedThought.metadata?.evaluationReasoning, 'Custom evaluation before promotion'); // Should preserve original reasoning
+    });
   });
 
   describe('spawnTotFromTask', () => {

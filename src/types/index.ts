@@ -26,7 +26,12 @@ export interface CognitiveMetadata {
    * Timestamp when thought was promoted to tasks
    */
   promotedAt?: string;
-  
+
+  /**
+   * Reason for promotion
+   */
+  promotionReason?: string;
+
   /**
    * Links to ToT trees spawned from this task
    */
