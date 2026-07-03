@@ -30,16 +30,14 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
             },
             description: 'Array of tasks to create - use positional refs (task-1, task-2) for cross-references within this batch'
           },
-          workflowId: { type: 'string', description: 'Workflow ID - all tasks must belong to this workflow. If provided but the workflow does not exist, it will be automatically created. If omitted, tasks will be created as standalone (no workflow association).' },
+          workflowId: { type: 'string', description: 'Workflow ID - all tasks must belong to this workflow. If provided but the workflow does not exist, it will be automatically created (requires strategyId). If omitted, tasks will be created as standalone (no workflow association) and assigned to a default strategy.' },
+          strategyId: { type: 'string', description: 'Strategy ID - required when workflowId triggers auto-creation. If workflow already exists, this is ignored. If workflowId is omitted, this specifies the strategy for standalone tasks (defaults to "scratch" strategy).' },
           deduplication: { type: 'string', enum: ['skip', 'error', 'overwrite'], description: 'Deduplication strategy: skip (use existing task), error (fail if duplicate exists), or overwrite (create new task anyway)' }
         },
-        required: ['tasks', 'workflowId']
+        required: ['tasks']
       }
     },
     handler: (args: any, service: any) => {
-      if (!args.workflowId) {
-        throw new Error('Tasks must belong to a workflow. Please provide workflowId parameter. First create a workflow using create_workflow tool, then create tasks under that workflow.');
-      }
       return service.createTasks(args);
     }
   },

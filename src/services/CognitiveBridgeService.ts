@@ -1,6 +1,7 @@
 import type {
   Tree,
   Thought,
+  Task,
   CognitiveMetadata,
   PromoteThoughtToTasksParams,
   PromoteThoughtToTasksResult,
@@ -157,7 +158,8 @@ export class CognitiveBridgeService extends BaseService {
     logger.info(`Promoted ${thoughtsToPromote.length} thoughts to ${taskIds.length} tasks in workflow ${params.workflowId}`);
 
     // After successful promotion, mark thoughts as selected/verified
-    this.markThoughtsAsPromoted(tree, thoughtsToPromote, taskIds, now);
+    // Skip evaluation gate if requested for simple workflows
+    this.markThoughtsAsPromoted(tree, thoughtsToPromote, taskIds, now, params.skipEvaluationGate);
 
     return {
       taskIds,
@@ -175,25 +177,26 @@ export class CognitiveBridgeService extends BaseService {
     tree: Tree,
     thoughtsToPromote: Thought[],
     promotedTaskIds: string[],
-    promotedAt: string
+    promotedAt: string,
+    skipEvaluationGate: boolean = false
   ): void {
     for (const thoughtToPromote of thoughtsToPromote) {
-      // Auto-evaluate if no score exists
-      if (thoughtToPromote.evaluation === null) {
+      // Auto-evaluate if no score exists and not skipping gate
+      if (!skipEvaluationGate && thoughtToPromote.evaluation === null) {
         thoughtToPromote.evaluation = 88; // High default score (85-90 range)
         thoughtToPromote.state = 'evaluated';
         thoughtToPromote.metadata = thoughtToPromote.metadata || {};
         thoughtToPromote.metadata.evaluationReasoning = 'Thought promoted to executable tasks via Cognitive Bridge';
         logger.info(`Thought ${thoughtToPromote.id} auto-evaluated with score 88 during promotion`);
       }
-      
+
       // Change state to selected (bypassing child evaluation check for promoted thoughts)
       thoughtToPromote.state = 'selected';
-      
+
       // Mark as verified
       thoughtToPromote.verified = true;
       thoughtToPromote.verificationNotes = 'Promoted to tasks. Full provenance stored in task.metadata.cognitive and cognitiveLinks.';
-      
+
       // Update cognitive metadata with promotion details
       this.preserveCognitiveMetadata(thoughtToPromote);
       thoughtToPromote.metadata = thoughtToPromote.metadata || {};
@@ -622,5 +625,322 @@ export class CognitiveBridgeService extends BaseService {
       strategiesRemoved,
       treesRemoved
     };
+  }
+
+  /**
+   * Auto-evaluate linked thoughts when a task is completed
+   * Called from TaskOrchestratorService when task status becomes 'completed'
+   */
+  autoEvaluateLinkedThoughts(taskId: string, defaultScore: number = 85): {
+    evaluated: number;
+    skipped: number;
+    errors: number;
+  } {
+    const task = this.taskService.getTask(taskId);
+    if (!task) {
+      throw new TaskNotFoundError(taskId);
+    }
+
+    const linkedThoughtIds = task.metadata?.cognitive?.linkedThoughtIds as string[];
+    if (!linkedThoughtIds || linkedThoughtIds.length === 0) {
+      return { evaluated: 0, skipped: 0, errors: 0 };
+    }
+
+    let evaluated = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    for (const thoughtId of linkedThoughtIds) {
+      try {
+        // Find the thought in any tree
+        const thought = this.getThoughtData(thoughtId);
+        if (!thought) {
+          skipped++;
+          continue;
+        }
+
+        // Skip if already evaluated or not in pending state
+        if (thought.state !== 'pending' || thought.evaluation !== null) {
+          skipped++;
+          continue;
+        }
+
+        // Evaluate the thought
+        this.totService.evaluateThought({
+          treeId: this.findTreeIdForThought(thoughtId),
+          thoughtId,
+          score: defaultScore,
+          reasoning: `Auto-evaluated after linked task '${task.name}' was completed`
+        });
+
+        evaluated++;
+      } catch (e) {
+        logger.error(`Failed to auto-evaluate thought ${thoughtId}: ${e}`);
+        errors++;
+      }
+    }
+
+    logger.info(`Auto-evaluated ${evaluated} linked thoughts for task ${taskId} (skipped: ${skipped}, errors: ${errors})`);
+
+    return { evaluated, skipped, errors };
+  }
+
+  /**
+   * Find the tree ID for a given thought
+   */
+  private findTreeIdForThought(thoughtId: string): string {
+    for (const tree of this.totService.getAllTrees()) {
+      if (tree.thoughts.has(thoughtId)) {
+        return tree.id;
+      }
+    }
+    throw new ThoughtNotFoundError('unknown', thoughtId);
+  }
+
+  /**
+   * Atomically complete a task and evaluate/verify all linked thoughts
+   */
+  completeTaskAndThought(params: {
+    taskId: string;
+    score?: number;
+    verificationNotes?: string;
+  }): {
+    task: Task;
+    thoughtResults: Array<{
+      thoughtId: string;
+      evaluated: boolean;
+      verified: boolean;
+      error?: string;
+    }>;
+  } {
+    const { taskId, score = 85, verificationNotes } = params;
+
+    // Mark task as completed
+    const task = this.taskService.updateTask(taskId, { status: 'completed' });
+
+    // Get linked thoughts
+    const linkedThoughtIds = task.metadata?.cognitive?.linkedThoughtIds as string[];
+    const thoughtResults: Array<{
+      thoughtId: string;
+      evaluated: boolean;
+      verified: boolean;
+      error?: string;
+    }> = [];
+
+    if (linkedThoughtIds && linkedThoughtIds.length > 0) {
+      for (const thoughtId of linkedThoughtIds) {
+        try {
+          const thought = this.getThoughtData(thoughtId);
+          if (!thought) {
+            thoughtResults.push({ thoughtId, evaluated: false, verified: false, error: 'Thought not found' });
+            continue;
+          }
+
+          const treeId = this.findTreeIdForThought(thoughtId);
+
+          // Evaluate if pending
+          if (thought.state === 'pending' && thought.evaluation === null) {
+            this.totService.evaluateThought({
+              treeId,
+              thoughtId,
+              score,
+              reasoning: `Auto-evaluated after linked task '${task.name}' was completed via complete_task_and_thought`
+            });
+          }
+
+          // Verify if verification notes provided
+          if (verificationNotes) {
+            this.totService.verifyThought({
+              treeId,
+              thoughtId,
+              verificationNotes
+            });
+          }
+
+          thoughtResults.push({ thoughtId, evaluated: true, verified: !!verificationNotes });
+        } catch (e) {
+          thoughtResults.push({ thoughtId, evaluated: false, verified: false, error: String(e) });
+        }
+      }
+    }
+
+    return { task, thoughtResults };
+  }
+
+  /**
+   * Quick plan: single call to create strategy + workflow + tasks + root thought
+   */
+  quickPlan(params: {
+    goal: string;
+    tasks: Array<{
+      name: string;
+      description?: string;
+      dependencies?: string[];
+      parentTaskId?: string;
+      order?: number;
+      status?: Task['status'];
+      metadata?: Record<string, any>;
+    }>;
+    strategyName?: string;
+    workflowName?: string;
+  }): {
+    strategyId: string;
+    workflowId: string;
+    taskIds: string[];
+    treeId: string;
+    rootThoughtId: string;
+  } {
+    const { goal, tasks, strategyName, workflowName } = params;
+
+    // Create or get strategy (createStrategy handles normalization internally)
+    const strategy = this.taskService.createStrategy({
+      name: strategyName || goal,
+      description: `Strategy for: ${goal}`
+    });
+
+    // Create workflow (createWorkflow handles normalization internally)
+    const workflow = this.taskService.createWorkflow({
+      name: workflowName || goal,
+      description: `Workflow for: ${goal}`,
+      taskIds: [],
+      strategyId: strategy.id
+    });
+
+    // Create tasks
+    const taskResult = this.taskService.createTasks({
+      tasks,
+      workflowId: workflow.id,
+      strategyId: strategy.id
+    });
+
+    // Create tree with root thought
+    const tree = this.totService.createTree({
+      goal,
+      rootContent: `Implementation plan for: ${goal}`,
+      strategyId: strategy.id
+    });
+
+    return {
+      strategyId: strategy.id,
+      workflowId: workflow.id,
+      taskIds: taskResult.tasks.map(t => t.id),
+      treeId: tree.id,
+      rootThoughtId: tree.rootId
+    };
+  }
+
+  /**
+   * Sync workflow thoughts - evaluate pending linked thoughts for all completed tasks
+   */
+  syncWorkflowThoughts(params: {
+    workflowId: string;
+  }): {
+    synced: number;
+    alreadySynced: number;
+    skipped: number;
+    details: Array<{
+      taskId: string;
+      taskName: string;
+      thoughtId: string;
+      action: 'evaluated' | 'skipped' | 'error';
+      reason?: string;
+    }>;
+  } {
+    const { workflowId } = params;
+
+    // Get workflow
+    const workflow = this.taskService.getWorkflow(workflowId);
+    if (!workflow) {
+      throw new ThoughtflowError(`Workflow '${workflowId}' not found`, 'WORKFLOW_NOT_FOUND');
+    }
+
+    let synced = 0;
+    let alreadySynced = 0;
+    let skipped = 0;
+    const details: Array<{
+      taskId: string;
+      taskName: string;
+      thoughtId: string;
+      action: 'evaluated' | 'skipped' | 'error';
+      reason?: string;
+    }> = [];
+
+    // Iterate through all tasks in the workflow
+    for (const taskId of workflow.taskIds) {
+      const task = this.taskService.getTask(taskId);
+      if (!task) continue;
+
+      // Only process completed tasks
+      if (task.status !== 'completed') {
+        skipped++;
+        continue;
+      }
+
+      const linkedThoughtIds = task.metadata?.cognitive?.linkedThoughtIds as string[];
+      if (!linkedThoughtIds || linkedThoughtIds.length === 0) {
+        continue;
+      }
+
+      // Evaluate each linked thought
+      for (const thoughtId of linkedThoughtIds) {
+        try {
+          const thought = this.getThoughtData(thoughtId);
+          if (!thought) {
+            details.push({
+              taskId,
+              taskName: task.name,
+              thoughtId,
+              action: 'skipped',
+              reason: 'Thought not found'
+            });
+            skipped++;
+            continue;
+          }
+
+          // Skip if already evaluated
+          if (thought.state !== 'pending' || thought.evaluation !== null) {
+            details.push({
+              taskId,
+              taskName: task.name,
+              thoughtId,
+              action: 'skipped',
+              reason: 'Already evaluated'
+            });
+            alreadySynced++;
+            continue;
+          }
+
+          // Evaluate the thought
+          const treeId = this.findTreeIdForThought(thoughtId);
+          this.totService.evaluateThought({
+            treeId,
+            thoughtId,
+            score: 85,
+            reasoning: `Auto-evaluated via sync_workflow_thoughts for completed task '${task.name}'`
+          });
+
+          details.push({
+            taskId,
+            taskName: task.name,
+            thoughtId,
+            action: 'evaluated'
+          });
+          synced++;
+        } catch (e) {
+          details.push({
+            taskId,
+            taskName: task.name,
+            thoughtId,
+            action: 'error',
+            reason: String(e)
+          });
+          skipped++;
+        }
+      }
+    }
+
+    logger.info(`Sync workflow ${workflowId}: ${synced} evaluated, ${alreadySynced} already synced, ${skipped} skipped`);
+
+    return { synced, alreadySynced, skipped, details };
   }
 }

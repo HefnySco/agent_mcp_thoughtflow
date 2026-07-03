@@ -908,6 +908,64 @@ export class ToTService extends BaseService {
   }
 
   /**
+   * Batch evaluate multiple thoughts
+   * Consistent with batch pattern in add_ideas/create_tasks
+   */
+  batchEvaluateThoughts(params: {
+    evaluations: Array<{
+      treeId: string;
+      thoughtId: string;
+      score: number;
+      creativity?: number;
+      risk?: number;
+      criteriaScores?: Record<string, number>;
+      reasoning?: string;
+    }>;
+  }): {
+    results: Array<{
+      thoughtId: string;
+      state: string;
+      evaluation: any;
+      error?: string;
+    }>;
+    successCount: number;
+    failCount: number;
+  } {
+    const results: Array<{
+      thoughtId: string;
+      state: string;
+      evaluation: any;
+      error?: string;
+    }> = [];
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const evalParams of params.evaluations) {
+      try {
+        const thought = this.evaluateThought(evalParams);
+        results.push({
+          thoughtId: evalParams.thoughtId,
+          state: thought.state,
+          evaluation: thought.evaluation
+        });
+        successCount++;
+      } catch (e) {
+        results.push({
+          thoughtId: evalParams.thoughtId,
+          state: 'error',
+          evaluation: null,
+          error: String(e)
+        });
+        failCount++;
+      }
+    }
+
+    logger.info(`Batch evaluate: ${successCount} succeeded, ${failCount} failed`);
+
+    return { results, successCount, failCount };
+  }
+
+  /**
    * Verify a thought
    * Auto-transitions from "pending" to "evaluated" when appropriate
    * Returns rich feedback with state transition information

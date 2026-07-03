@@ -211,6 +211,7 @@ export interface PromoteThoughtToTasksParams {
   flattenHierarchy?: boolean;
   workflowId: string; // Mandatory: tasks must belong to exactly one workflow
   taskNamePrefix?: string;
+  skipEvaluationGate?: boolean; // If true, skip the evaluate+select cycle for simple workflows
 }
 
 export interface PromoteThoughtToTasksResult {

@@ -4,6 +4,7 @@ import type {
   Strategy
 } from '../types/index.js';
 import type { IStorageAdapter } from '../storage/IStorageAdapter.js';
+import type { CognitiveBridgeService } from './CognitiveBridgeService.js';
 import {
   TaskNotFoundError,
   WorkflowNotFoundError,
@@ -35,8 +36,18 @@ const STRATEGY_LLM_INSTRUCTION = `Strategy Usage Rules:
  * TaskOrchestratorService manages task execution with dependency tracking
  */
 export class TaskOrchestratorService extends BaseService {
+  private cognitiveBridgeService?: CognitiveBridgeService;
+
   constructor(storageAdapter: IStorageAdapter) {
     super(storageAdapter, 'TaskOrchestratorService');
+  }
+
+  /**
+   * Set the CognitiveBridgeService reference
+   * Called from index.ts after service composition
+   */
+  setCognitiveBridgeService(bridgeService: CognitiveBridgeService): void {
+    this.cognitiveBridgeService = bridgeService;
   }
 
   /**
@@ -44,6 +55,23 @@ export class TaskOrchestratorService extends BaseService {
    */
   private getTaskReferenceGuidance(): string {
     return " Tip: Use positional refs like 'task-1' for tasks in the same batch, or the actual task ID. Name-based resolution is supported.";
+  }
+
+  /**
+   * Get or create the 'scratch' strategy for standalone entities
+   */
+  private getOrCreateScratchStrategy(): Strategy {
+    const scratchId = this.normalizeKey('scratch');
+    let strategy = this.state.strategies.get(scratchId);
+    
+    if (!strategy) {
+      strategy = this.createStrategy({
+        name: 'scratch',
+        description: 'Default strategy for standalone tasks and trees when no strategy is specified'
+      });
+    }
+    
+    return strategy;
   }
 
   /**
@@ -152,6 +180,7 @@ export class TaskOrchestratorService extends BaseService {
       metadata?: Record<string, any>;
     }>;
     workflowId?: string;
+    strategyId?: string;
     deduplication?: 'skip' | 'error' | 'overwrite';
   }): { 
     tasks: Array<{ id: string; name: string; status: string }>; 
@@ -169,23 +198,44 @@ export class TaskOrchestratorService extends BaseService {
     let message: string | undefined;
 
     // Handle workflowId scenarios
+    let effectiveStrategyId: string | undefined;
+
     if (params.workflowId) {
       // workflowId is provided - check if it exists
       workflow = this.state.workflows.get(params.workflowId);
       if (!workflow) {
-        // Auto-create workflow
-        const strategy = this.createStrategy({ name: params.workflowId });
+        // Workflow doesn't exist - require strategyId to auto-create it
+        if (!params.strategyId) {
+          throw new ThoughtflowError(
+            `Workflow '${params.workflowId}' does not exist. To auto-create a workflow, you must provide a strategyId parameter. Either create the workflow explicitly using create_workflow, or provide strategyId to allow auto-creation.`,
+            'WORKFLOW_NOT_FOUND'
+          );
+        }
+        // Auto-create workflow with provided strategyId
         const createdWorkflow = this.createWorkflow({
           name: params.workflowId,
           description: `Auto-created workflow for tasks`,
           taskIds: [],
-          strategyId: strategy.id
+          strategyId: params.strategyId
         });
         // Get the full workflow object from state (createWorkflow returns minimal summary)
         workflow = this.state.workflows.get(createdWorkflow.id);
         workflowCreated = true;
-        message = `Workflow '${params.workflowId}' did not exist and was automatically created. The ${params.tasks.length} new tasks have been added to it. You can later use move_task to move any of these tasks to a different workflow, or rename the workflow if the name is not ideal.`;
+        message = `Workflow '${params.workflowId}' did not exist and was automatically created under strategy '${params.strategyId}'. The ${params.tasks.length} new tasks have been added to it. You can later use move_task to move any of these tasks to a different workflow, or rename the workflow if the name is not ideal.`;
+        effectiveStrategyId = params.strategyId;
+      } else {
+        effectiveStrategyId = workflow.strategyId;
       }
+    } else {
+      // workflowId omitted - tasks will be standalone
+      // If strategyId is provided, use it; otherwise use 'scratch' strategy
+      effectiveStrategyId = params.strategyId;
+      if (!effectiveStrategyId) {
+        // Ensure 'scratch' strategy exists
+        const scratchStrategy = this.getOrCreateScratchStrategy();
+        effectiveStrategyId = scratchStrategy.id;
+      }
+      message = `Tasks created as standalone. Associated with strategy '${effectiveStrategyId}'. You can later add them to a workflow using add_task_to_workflow.`;
     }
 
     const deduplication = params.deduplication || 'skip';
@@ -265,7 +315,7 @@ export class TaskOrchestratorService extends BaseService {
         createdAt: now,
         updatedAt: now,
         workflowId: params.workflowId,
-        strategyId: workflow?.strategyId,
+        strategyId: effectiveStrategyId,
         metadata: taskDef.metadata
       };
 
@@ -482,26 +532,20 @@ export class TaskOrchestratorService extends BaseService {
     task.updatedAt = now;
     this.state.tasks.set(id, task);
     this.triggerSave();
-    
-    // Generate cognitive suggestions if task was just completed
-    const cognitiveSuggestions: Array<{ type: string; thoughtId: string; reason: string }> = [];
-    if (updates.status === 'completed' && task.metadata?.cognitive?.linkedThoughtIds) {
-      const linkedThoughtIds = task.metadata.cognitive.linkedThoughtIds as string[];
-      for (const thoughtId of linkedThoughtIds) {
-        cognitiveSuggestions.push({
-          type: 'verify_thought',
-          thoughtId,
-          reason: `Task '${task.name}' completed. Consider verifying linked thought '${thoughtId}' to confirm its findings.`
-        });
+
+    // Auto-evaluate linked thoughts if task was just completed
+    if (updates.status === 'completed' && this.cognitiveBridgeService) {
+      try {
+        const result = this.cognitiveBridgeService.autoEvaluateLinkedThoughts(id);
+        logger.info(`Auto-evaluated ${result.evaluated} linked thoughts for task ${id}`);
+      } catch (e) {
+        logger.error(`Failed to auto-evaluate linked thoughts for task ${id}: ${e}`);
+        // Don't fail the task update if auto-evaluation fails
       }
     }
-    
-    // Return minimal summary with cognitive suggestions
-    const result = { id, name: task.name, status: task.status } as Task & { cognitiveSuggestions?: Array<{ type: string; thoughtId: string; reason: string }> };
-    if (cognitiveSuggestions.length > 0) {
-      result.cognitiveSuggestions = cognitiveSuggestions;
-    }
-    return result;
+
+    // Return minimal summary
+    return { id, name: task.name, status: task.status } as Task;
   }
 
   /**
@@ -865,9 +909,16 @@ export class TaskOrchestratorService extends BaseService {
 
   /**
    * Get all strategies
+   * Returns minimal summaries without LLM_instruction to reduce token overhead
    */
   getAllStrategies(): Strategy[] {
-    return Array.from(this.state.strategies.values()).map(s => this.enrichStrategyWithLLMInstruction(s));
+    return Array.from(this.state.strategies.values()).map(s => ({
+      id: s.id,
+      name: s.name,
+      status: s.status,
+      description: s.description,
+      metadata: s.metadata
+    } as Strategy));
   }
 
   /**

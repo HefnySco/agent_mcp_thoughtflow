@@ -282,5 +282,36 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
         count: thoughts.length
       };
     }
+  },
+  {
+    name: 'batch_evaluate_thoughts',
+    tool: {
+      name: 'batch_evaluate_thoughts',
+      description: 'Batch evaluate multiple thoughts in one call. Consistent with batch pattern in add_ideas/create_tasks.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          evaluations: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                treeId: { type: 'string', description: 'Tree ID' },
+                thoughtId: { type: 'string', description: 'Thought ID' },
+                score: { type: 'number', description: 'Evaluation score (0-100)' },
+                creativity: { type: 'number', description: 'Creativity score (0-100)' },
+                risk: { type: 'number', description: 'Risk score (0-100)' },
+                criteriaScores: { type: 'object', description: 'Custom criteria scores' },
+                reasoning: { type: 'string', description: 'Evaluation reasoning' }
+              },
+              required: ['treeId', 'thoughtId', 'score']
+            },
+            description: 'Array of thought evaluations'
+          }
+        },
+        required: ['evaluations']
+      }
+    },
+    handler: (args: any, service: any) => service.batchEvaluateThoughts(args)
   }
 ];

@@ -18,7 +18,8 @@ export const bridgeToolDefinitions: { name: string; tool: Tool; handler: ToolHan
           includeDescendants: { type: 'boolean', description: 'Include descendant thoughts' },
           flattenHierarchy: { type: 'boolean', description: 'Flatten subtree into flat task list' },
           taskNamePrefix: { type: 'string', description: 'Prefix for task names' },
-          workflowId: { type: 'string', description: 'Assign tasks to existing workflow ID' }
+          workflowId: { type: 'string', description: 'Assign tasks to existing workflow ID' },
+          skipEvaluationGate: { type: 'boolean', description: 'Skip the evaluate+select cycle for simple workflows (default false)' }
         },
         required: ['treeId', 'thoughtId', 'workflowId']
       }
@@ -91,5 +92,55 @@ export const bridgeToolDefinitions: { name: string; tool: Tool; handler: ToolHan
       }
     },
     handler: (_args: any, service: any) => service.deduplicateStrategiesAndTrees()
+  },
+  {
+    name: 'complete_task_and_thought',
+    tool: {
+      name: 'complete_task_and_thought',
+      description: 'Atomically mark a task as completed and evaluate/verify all linked thoughts in one operation',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          taskId: { type: 'string', description: 'Task ID to complete' },
+          score: { type: 'number', description: 'Evaluation score for linked thoughts (default 85)' },
+          verificationNotes: { type: 'string', description: 'Optional verification notes for linked thoughts' }
+        },
+        required: ['taskId']
+      }
+    },
+    handler: (args: any, service: any) => service.completeTaskAndThought(args)
+  },
+  {
+    name: 'quick_plan',
+    tool: {
+      name: 'quick_plan',
+      description: 'Single call to create strategy + workflow + tasks + root thought. Reduces 4-5 tool calls to 1 for new project setup.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          goal: { type: 'string', description: 'Goal for the project' },
+          tasks: { type: 'array', items: { type: 'object' }, description: 'Array of tasks to create' },
+          strategyName: { type: 'string', description: 'Optional strategy name (defaults to goal)' },
+          workflowName: { type: 'string', description: 'Optional workflow name (defaults to goal)' }
+        },
+        required: ['goal', 'tasks']
+      }
+    },
+    handler: (args: any, service: any) => service.quickPlan(args)
+  },
+  {
+    name: 'sync_workflow_thoughts',
+    tool: {
+      name: 'sync_workflow_thoughts',
+      description: 'Scan all completed tasks in a workflow and evaluate any still-pending linked thoughts. Returns sync report.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          workflowId: { type: 'string', description: 'Workflow ID to sync' }
+        },
+        required: ['workflowId']
+      }
+    },
+    handler: (args: any, service: any) => service.syncWorkflowThoughts(args)
   }
 ];

@@ -144,6 +144,36 @@ spawn_tot_from_task({
 })
 ```
 
+### 3. Quick Plan (One-Call Setup)
+
+For new projects, use `quick_plan` to create strategy + workflow + tasks + root thought in a single call:
+
+```json
+quick_plan({
+  "goal": "Implement user authentication system",
+  "tasks": [
+    { "name": "Design auth schema", "description": "Define user, session, and token tables" },
+    { "name": "Implement password hashing", "dependencies": ["task-1"] },
+    { "name": "Create login endpoint", "dependencies": ["task-2"] },
+    { "name": "Add JWT token generation", "dependencies": ["task-3"] },
+    { "name": "Implement logout logic", "dependencies": ["task-4"] }
+  ],
+  "strategyName": "auth-system",
+  "workflowName": "auth-implementation"
+})
+
+// Returns:
+// {
+//   strategyId: "auth-system",
+//   workflowId: "auth-implementation",
+//   taskIds: ["task-1", "task-2", "task-3", "task-4", "task-5"],
+//   treeId: "...",
+//   rootThoughtId: "..."
+// }
+```
+
+This reduces 4-5 tool calls to 1, making onboarding friction-free.
+
 ---
 
 ## Tool Reference
@@ -156,6 +186,11 @@ spawn_tot_from_task({
 | `spawn_tot_from_task` | Spawn fresh reasoning from a blocked task |
 | `link_thought_to_task` | Create soft bidirectional links for "inspired by" or "related to" relationships |
 | `get_cognitive_provenance` | Trace full reasoning → execution history |
+| `complete_task_and_thought` | Atomically mark task completed and evaluate/verify linked thoughts |
+| `quick_plan` | Single call to create strategy + workflow + tasks + root thought |
+| `sync_workflow_thoughts` | Scan completed tasks and evaluate pending linked thoughts |
+
+**Note**: `promote_thought_to_tasks` supports `skipEvaluationGate: true` for simple workflows that don't need the evaluate+select cycle. The system uses debounce mechanisms to prevent race conditions during heavy LLM usage.
 
 ### Task Orchestrator Tools
 
@@ -205,6 +240,16 @@ restore_deleted({ "entityType": "task", "id": "task-123" })
 // 5. Permanently purge old deleted items (e.g., older than 30 days)
 purge_deleted({ "entityType": "task", "olderThanDays": 30 })
 ```
+
+### State Size & Deduplication
+
+Cognitive links can accumulate over time. The system includes built-in deduplication tools to manage state size:
+
+- **`deduplicate_strategies_and_trees`** — Removes duplicate strategies and trees by normalized name/goal
+- **`deduplicate_strategies`** — Removes duplicate strategies only
+- **`deduplicate_trees`** — Removes duplicate trees only
+
+For production workloads with heavy cognitive link usage, monitor state file size and run deduplication periodically.
 
 ### Visualization Tools
 

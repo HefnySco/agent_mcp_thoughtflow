@@ -23,14 +23,17 @@ describe('CognitiveBridgeService', () => {
 
     taskService = new TaskOrchestratorService(storageAdapter);
     await taskService.load();
-    
+
     totService = new ToTService(storageAdapter);
     // Share state from taskService with totService
     totService.setState(taskService.getState());
-    
+
     bridgeService = new CognitiveBridgeService(storageAdapter, taskService, totService);
     // Share state from taskService with bridgeService
     bridgeService.setState(taskService.getState());
+
+    // Wire bridgeService into taskService for auto-evaluation
+    taskService.setCognitiveBridgeService(bridgeService);
 
     await bridgeService.load();
   });
@@ -579,16 +582,14 @@ describe('CognitiveBridgeService', () => {
         reason: 'Testing cognitive suggestions'
       });
 
-      // Complete the task
+      // Complete the task (auto-evaluates linked thoughts)
       const result = taskService.updateTask(task.id, { status: 'completed' });
 
-      // Verify cognitive suggestions are returned
-      assert.ok(result.cognitiveSuggestions);
-      assert.strictEqual(result.cognitiveSuggestions!.length, 1);
-      assert.strictEqual(result.cognitiveSuggestions![0].type, 'verify_thought');
-      assert.strictEqual(result.cognitiveSuggestions![0].thoughtId, tree.rootId);
-      assert.ok(result.cognitiveSuggestions![0].reason.includes('completed'));
-      assert.ok(result.cognitiveSuggestions![0].reason.includes(task.name));
+      // Verify the linked thought was auto-evaluated
+      const updatedThought = totService.getThought(tree.id, tree.rootId);
+      assert.ok(updatedThought);
+      assert.strictEqual(updatedThought.state, 'evaluated');
+      assert.ok(updatedThought.evaluation !== null);
     });
 
     it('should not return cognitive suggestions when task without linked thought is completed', async () => {
@@ -676,12 +677,11 @@ describe('CognitiveBridgeService', () => {
       // Advance workflow run
       const advanceResult = taskService.advanceWorkflowRun(runResult.runId);
 
-      // Verify cognitive suggestions are returned for task1
-      assert.ok(advanceResult.cognitiveSuggestions);
-      assert.strictEqual(advanceResult.cognitiveSuggestions!.length, 1);
-      assert.strictEqual(advanceResult.cognitiveSuggestions![0].type, 'verify_thought');
-      assert.strictEqual(advanceResult.cognitiveSuggestions![0].thoughtId, tree.rootId);
-      assert.ok(advanceResult.cognitiveSuggestions![0].reason.includes('workflow'));
+      // Verify the linked thought was auto-evaluated when task1 completed
+      const updatedThought = totService.getThought(tree.id, tree.rootId);
+      assert.ok(updatedThought);
+      assert.strictEqual(updatedThought.state, 'evaluated');
+      assert.ok(updatedThought.evaluation !== null);
     });
 
     it('should return multiple cognitive suggestions for task with multiple linked thoughts', async () => {
@@ -737,15 +737,25 @@ describe('CognitiveBridgeService', () => {
         reason: 'Third link'
       });
 
-      // Complete the task
+      // Complete the task (auto-evaluates linked thoughts)
       const result = taskService.updateTask(task.id, { status: 'completed' });
 
-      // Verify multiple cognitive suggestions are returned
-      assert.ok(result.cognitiveSuggestions);
-      assert.strictEqual(result.cognitiveSuggestions!.length, 3);
-      assert.strictEqual(result.cognitiveSuggestions![0].type, 'verify_thought');
-      assert.strictEqual(result.cognitiveSuggestions![1].type, 'verify_thought');
-      assert.strictEqual(result.cognitiveSuggestions![2].type, 'verify_thought');
+      // Verify all linked thoughts were auto-evaluated
+      const updatedRoot = totService.getThought(tree.id, tree.rootId);
+      const updatedChild1 = totService.getThought(tree.id, child1.id);
+      const updatedChild2 = totService.getThought(tree.id, child2.id);
+
+      assert.ok(updatedRoot);
+      assert.ok(updatedChild1);
+      assert.ok(updatedChild2);
+
+      assert.strictEqual(updatedRoot.state, 'evaluated');
+      assert.strictEqual(updatedChild1.state, 'evaluated');
+      assert.strictEqual(updatedChild2.state, 'evaluated');
+
+      assert.ok(updatedRoot.evaluation !== null);
+      assert.ok(updatedChild1.evaluation !== null);
+      assert.ok(updatedChild2.evaluation !== null);
     });
 
     it('should not return cognitive suggestions when task status changes to non-completed', async () => {

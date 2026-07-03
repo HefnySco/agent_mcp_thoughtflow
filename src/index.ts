@@ -91,6 +91,7 @@ class ThoughtflowServer {
     // Now create the actual services with proper bridge injection
     this.taskService = new TaskOrchestratorService(this.storageAdapter);
     this.taskService.setState(this.bridgeService.getState());
+    this.taskService.setCognitiveBridgeService(this.bridgeService);
 
     const llmConfigWithBridge = { ...llmConfig, cognitiveBridgeService: this.bridgeService };
     this.totService = new ToTService(this.storageAdapter, llmConfigWithBridge);
