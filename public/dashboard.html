@@ -155,6 +155,28 @@
     <!-- Trees Panel -->
     <div class="card rounded-lg p-6 mb-8">
       <h2 class="text-xl font-bold text-white mb-4"><i class="fa fa-lightbulb"></i> Trees / Ideas</h2>
+      <div class="grid grid-cols-5 gap-4 mb-4">
+        <div class="text-center">
+          <p class="text-2xl font-bold status-pending" id="thoughts-pending">0</p>
+          <p class="text-xs text-gray-400">Pending</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold status-evaluated" id="thoughts-evaluated">0</p>
+          <p class="text-xs text-gray-400">Evaluated</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold status-selected" id="thoughts-selected">0</p>
+          <p class="text-xs text-gray-400">Selected</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold status-pruned" id="thoughts-pruned">0</p>
+          <p class="text-xs text-gray-400">Pruned</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold text-grey-400" id="thoughts-deleted">0</p>
+          <p class="text-xs text-gray-400">Deleted</p>
+        </div>
+      </div>
       <div id="trees-list" class="space-y-3">
         <p class="text-gray-500 text-sm">Loading trees...</p>
       </div>
@@ -163,6 +185,28 @@
     <!-- Workflows Panel -->
     <div class="card rounded-lg p-6 mb-8">
       <h2 class="text-xl font-bold text-white mb-4"><i class="fa fa-cogs" ></i> Workflows</h2>
+      <div class="grid grid-cols-5 gap-4 mb-4">
+        <div class="text-center">
+          <p class="text-2xl font-bold status-pending" id="workflows-pending">0</p>
+          <p class="text-xs text-gray-400">Pending</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold status-in_progress" id="workflows-in_progress">0</p>
+          <p class="text-xs text-gray-400">In Progress</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold status-completed" id="workflows-completed">0</p>
+          <p class="text-xs text-gray-400">Completed</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold status-failed" id="workflows-failed">0</p>
+          <p class="text-xs text-gray-400">Failed</p>
+        </div>
+        <div class="text-center">
+          <p class="text-2xl font-bold text-grey-400" id="workflows-deleted">0</p>
+          <p class="text-xs text-gray-400">Deleted</p>
+        </div>
+      </div>
       <div id="workflows-list" class="space-y-3">
         <p class="text-gray-500 text-sm">Loading workflows...</p>
       </div>
@@ -301,12 +345,43 @@
       const deletedStrategies = state.strategies?.filter(s => s.isDeleted) || [];
       const totalDeleted = deletedTasks.length + deletedWorkflows.length + deletedTrees.length + deletedStrategies.length;
 
-      // Update overview cards (show active items)
+      // Filter items based on selected strategy for overview cards
+      let filteredTreesForOverview = activeTrees || [];
+      let filteredWorkflowsForOverview = activeWorkflows || [];
+      let filteredTasksForOverview = activeTasks || [];
+      let filteredLinksForOverview = activeLinks || [];
+      
+      if (selectedStrategyId) {
+        const selectedStrategy = activeStrategies?.find(s => s.id === selectedStrategyId);
+        if (selectedStrategy) {
+          if (selectedStrategy.treeIds) {
+            filteredTreesForOverview = filteredTreesForOverview.filter(t => selectedStrategy.treeIds.includes(t.id));
+          }
+          if (selectedStrategy.workflowIds) {
+            filteredWorkflowsForOverview = filteredWorkflowsForOverview.filter(w => selectedStrategy.workflowIds.includes(w.id));
+          }
+          // Filter tasks that belong to filtered workflows
+          const filteredWorkflowIds = filteredWorkflowsForOverview.map(w => w.id);
+          filteredTasksForOverview = filteredTasksForOverview.filter(t => 
+            t.strategyId === selectedStrategyId || 
+            (t.workflowId && filteredWorkflowIds.includes(t.workflowId))
+          );
+          // Filter links that connect thoughts/tasks from filtered items
+          const filteredTreeIds = filteredTreesForOverview.map(t => t.id);
+          const filteredTaskIds = filteredTasksForOverview.map(t => t.id);
+          filteredLinksForOverview = filteredLinksForOverview.filter(l => 
+            (l.treeId && filteredTreeIds.includes(l.treeId)) ||
+            (l.taskId && filteredTaskIds.includes(l.taskId))
+          );
+        }
+      }
+
+      // Update overview cards (show filtered items based on selected strategy)
       document.getElementById('total-strategies').textContent = activeStrategies.length;
-      document.getElementById('total-trees').textContent = activeTrees.length;
-      document.getElementById('total-tasks').textContent = activeTasks.length;
-      document.getElementById('total-workflows').textContent = activeWorkflows.length;
-      document.getElementById('total-links').textContent = activeLinks.length;
+      document.getElementById('total-trees').textContent = filteredTreesForOverview.length;
+      document.getElementById('total-tasks').textContent = filteredTasksForOverview.length;
+      document.getElementById('total-workflows').textContent = filteredWorkflowsForOverview.length;
+      document.getElementById('total-links').textContent = filteredLinksForOverview.length;
 
       // Update deleted items overview
       document.getElementById('total-deleted').textContent = totalDeleted;
@@ -353,6 +428,67 @@
       document.getElementById('tasks-completed').textContent = completed;
       document.getElementById('tasks-failed').textContent = failed;
       document.getElementById('tasks-deleted').textContent = deleted;
+
+      // Update thought status breakdown (use filtered trees based on selected strategy)
+      const allThoughts = [];
+      const deletedThoughts = [];
+      
+      // Filter trees based on selected strategy
+      let filteredTreesForStats = displayTrees || [];
+      if (selectedStrategyId) {
+        const selectedStrategy = displayStrategies?.find(s => s.id === selectedStrategyId);
+        if (selectedStrategy && selectedStrategy.treeIds) {
+          filteredTreesForStats = filteredTreesForStats.filter(t => selectedStrategy.treeIds.includes(t.id));
+        }
+      }
+      
+      filteredTreesForStats.forEach(tree => {
+        if (tree.thoughts) {
+          Object.values(tree.thoughts).forEach(thought => {
+            if (thought.isDeleted) {
+              deletedThoughts.push(thought);
+            } else {
+              allThoughts.push(thought);
+            }
+          });
+        }
+      });
+      
+      const thoughtsPending = allThoughts.filter(t => t.state === 'pending').length;
+      const thoughtsEvaluated = allThoughts.filter(t => t.state === 'evaluated').length;
+      const thoughtsSelected = allThoughts.filter(t => t.state === 'selected').length;
+      const thoughtsPruned = allThoughts.filter(t => t.state === 'pruned').length;
+      const thoughtsDeleted = deletedThoughts.length;
+
+      document.getElementById('thoughts-pending').textContent = thoughtsPending;
+      document.getElementById('thoughts-evaluated').textContent = thoughtsEvaluated;
+      document.getElementById('thoughts-selected').textContent = thoughtsSelected;
+      document.getElementById('thoughts-pruned').textContent = thoughtsPruned;
+      document.getElementById('thoughts-deleted').textContent = thoughtsDeleted;
+
+      // Update workflow status breakdown (use filtered workflows based on selected strategy)
+      let workflowsForStats = displayWorkflows || [];
+      let deletedWorkflowsForStats = deletedWorkflows || [];
+      
+      if (selectedStrategyId) {
+        const selectedStrategy = displayStrategies?.find(s => s.id === selectedStrategyId);
+        if (selectedStrategy && selectedStrategy.workflowIds) {
+          workflowsForStats = workflowsForStats.filter(w => selectedStrategy.workflowIds.includes(w.id));
+          deletedWorkflowsForStats = deletedWorkflowsForStats.filter(w => selectedStrategy.workflowIds.includes(w.id));
+        }
+      }
+      
+      const workflowsPending = workflowsForStats.filter(w => w.status === 'pending').length;
+      const workflowsInProgress = workflowsForStats.filter(w => w.status === 'in_progress').length;
+      const workflowsCompleted = workflowsForStats.filter(w => w.status === 'completed').length;
+      const workflowsFailed = workflowsForStats.filter(w => w.status === 'failed').length;
+      const workflowsDeleted = deletedWorkflowsForStats.length;
+
+      document.getElementById('workflows-pending').textContent = workflowsPending;
+      document.getElementById('workflows-in_progress').textContent = workflowsInProgress;
+      document.getElementById('workflows-completed').textContent = workflowsCompleted;
+      document.getElementById('workflows-failed').textContent = workflowsFailed;
+      document.getElementById('workflows-deleted').textContent = workflowsDeleted;
 
       // Update strategies list (clickable rows)
       const strategiesList = document.getElementById('strategies-list');
@@ -726,7 +862,10 @@
           <div class="bg-gray-800 rounded p-4 ${selectedStrategyId ? 'border-l-4 border-l-green-500' : ''} ${w.isDeleted ? 'opacity-50 bg-red-900/10' : ''}">
             <div class="flex justify-between items-start mb-3">
               <div class="flex-1">
-                <h4 class="font-medium text-white ${w.isDeleted ? 'line-through text-red-400' : ''}">${escapeHtml(w.name)}</h4>
+                <div class="flex items-center gap-2">
+                  <h4 class="font-medium text-white ${w.isDeleted ? 'line-through text-red-400' : ''}">${escapeHtml(w.name)}</h4>
+                  <span class="text-xs text-gray-400">status: (<span class="font-medium status-${w.status}">${w.status}</span>)</span>
+                </div>
                 <p class="text-xs text-gray-400 mt-1">${escapeHtml(w.description || 'No description')}</p>
                 <p class="text-xs text-gray-400">Tasks: ${workflowTasks.length}</p>
                 ${w.isDeleted ? `<p class="text-xs text-red-400 mt-1">Deleted: ${w.deletedAt ? new Date(w.deletedAt).toLocaleString() : 'N/A'}</p>` : ''}
