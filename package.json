@@ -28,6 +28,7 @@
   ],
   "author": "",
   "license": "MIT",
+  "icon": "icon.svg",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
     "uuid": "^11.0.3"
