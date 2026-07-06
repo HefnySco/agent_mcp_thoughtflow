@@ -57,6 +57,7 @@ All bridge operations automatically maintain `metadata.cognitive` and create aud
 - Workflow creation and execution engine with automatic dependency resolution
 - `startWorkflowExecution` + `advanceWorkflowRun` for controlled execution
 - `getReadyTasks` for just-in-time task dispatching
+- **First-class verification fields** — `verified`, `verifiedAt`, `verificationNotes`, `verificationMethod` for tracking verification status
 
 ### Tree of Thoughts
 
@@ -64,6 +65,7 @@ All bridge operations automatically maintain `metadata.cognitive` and create aud
 - Multi-criteria evaluation (`score`, `creativity`, `risk`, custom criteria)
 - Pruning, backtracking, verification, and selection
 - Strategy grouping for organizing related reasoning sessions
+- **First-class verification fields** — `verified`, `verifiedAt`, `verificationNotes`, `verificationMethod` for tracking verification status
 
 ### Strategy Model (Top-Level Organizer)
 
@@ -173,6 +175,59 @@ quick_plan({
 ```
 
 This reduces 4-5 tool calls to 1, making onboarding friction-free.
+
+---
+
+## Web UI Dashboard
+
+The Thoughtflow Dashboard provides a comprehensive web interface for inspecting cognitive provenance, including:
+
+- **Strategy Overview** — View all strategies with their associated trees and workflows
+- **Task Management** — Monitor task status, dependencies, and execution progress
+- **Tree of Thoughts Visualization** — Explore thought trees with evaluation scores and states
+- **Workflow Tracking** — Track workflow execution status and completion
+- **Cognitive Links** — Inspect bidirectional links between thoughts and tasks
+- **Real-time Updates** — Auto-refresh capability with change indicators
+
+### Starting the Dashboard
+
+```bash
+# Build the project first (if not already built)
+npm run build
+
+# Start the dashboard server
+npm run dashboard
+```
+
+The dashboard server will start on port 3000 (or the next available port if 3000 is in use). You'll see output like:
+
+```
+Thoughtflow Dashboard server running at http://localhost:3000
+Dashboard: http://localhost:3000/dashboard
+API: http://localhost:3000/api/state
+State Info: http://localhost:3000/api/state/info
+```
+
+### Accessing the Dashboard
+
+Open your browser and navigate to:
+- **Dashboard**: `http://localhost:3000/dashboard`
+
+### Dashboard Features
+
+- **Strategy Filtering** — Click on a strategy to filter trees, workflows, and tasks by that strategy
+- **Show/Hide Deleted Items** — Toggle the checkbox to view soft-deleted items
+- **Auto-Refresh** — Enable/disable automatic data refresh (default: ON)
+- **Manual Refresh** — Click the Refresh button to manually update data
+- **Collapsible Trees** — Expand/collapse thought trees to explore reasoning branches
+- **Status Indicators** — Color-coded status indicators for tasks, thoughts, and workflows
+
+### API Endpoints
+
+The dashboard server provides the following API endpoints:
+
+- `GET /api/state` — Returns the complete Thoughtflow state (strategies, tasks, trees, workflows, cognitive links)
+- `GET /api/state/info` — Returns state metadata (exists, lastModified, size)
 
 ---
 
@@ -389,7 +444,7 @@ npm run build
 - [ ] Richer workflow visualization and Gantt-style views
 - [ ] Built-in retry policies and task timeout handling
 - [ ] Multi-agent collaboration primitives
-- [ ] Web UI for inspecting cognitive provenance
+- [x] Web UI for inspecting cognitive provenance
 
 ---
 

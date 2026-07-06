@@ -102,6 +102,9 @@ export function registerTotHandlers(
       risk?: number;
       criteriaScores?: Record<string, number>;
       reasoning?: string;
+      verified?: boolean;
+      verificationNotes?: string;
+      verificationMethod?: string;
     }): Promise<Thought> => {
       return totService.evaluateThought(args);
     }
@@ -116,6 +119,7 @@ export function registerTotHandlers(
       treeId: string;
       thoughtId: string;
       verificationNotes?: string;
+      verificationMethod?: string;
     }): Promise<Thought> => {
       return totService.verifyThought(args);
     }

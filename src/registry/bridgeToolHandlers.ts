@@ -103,7 +103,9 @@ export const bridgeToolDefinitions: { name: string; tool: Tool; handler: ToolHan
         properties: {
           taskId: { type: 'string', description: 'Task ID to complete' },
           score: { type: 'number', description: 'Evaluation score for linked thoughts (default 85)' },
-          verificationNotes: { type: 'string', description: 'Optional verification notes for linked thoughts' }
+          verificationNotes: { type: 'string', description: 'Optional verification notes for linked thoughts' },
+          verified: { type: 'boolean', description: 'Mark task as verified' },
+          verificationMethod: { type: 'string', description: 'Verification method (e.g. "manual_test", "stress_test", "code_review", "automated_test")' }
         },
         required: ['taskId']
       }

@@ -704,6 +704,8 @@ export class CognitiveBridgeService extends BaseService {
     taskId: string;
     score?: number;
     verificationNotes?: string;
+    verified?: boolean;
+    verificationMethod?: string;
   }): {
     task: Task;
     thoughtResults: Array<{
@@ -713,10 +715,23 @@ export class CognitiveBridgeService extends BaseService {
       error?: string;
     }>;
   } {
-    const { taskId, score = 85, verificationNotes } = params;
+    const { taskId, score = 85, verificationNotes, verified, verificationMethod } = params;
 
-    // Mark task as completed
-    const task = this.taskService.updateTask(taskId, { status: 'completed' });
+    // Mark task as completed with verification fields
+    const taskUpdate: any = { status: 'completed' };
+    if (verified !== undefined) {
+      taskUpdate.verified = verified;
+      if (verified) {
+        taskUpdate.verifiedAt = new Date().toISOString();
+      }
+    }
+    if (verificationNotes !== undefined) {
+      taskUpdate.verificationNotes = verificationNotes;
+    }
+    if (verificationMethod !== undefined) {
+      taskUpdate.verificationMethod = verificationMethod;
+    }
+    const task = this.taskService.updateTask(taskId, taskUpdate);
 
     // Get linked thoughts
     const linkedThoughtIds = task.metadata?.cognitive?.linkedThoughtIds as string[];

@@ -96,6 +96,10 @@ export interface Task {
   errorMessage?: string;
   workflowId?: string; // Optional: task can be standalone or belong to exactly one workflow
   strategyId?: string; // Denormalized from workflow for convenience
+  verified?: boolean;
+  verifiedAt?: string;        // ISO timestamp
+  verificationNotes?: string;
+  verificationMethod?: string; // e.g. "manual_test", "stress_test", "code_review", "automated_test"
   metadata?: Record<string, any>;
   isDeleted?: boolean;
   deletedAt?: string | null;
@@ -154,7 +158,9 @@ export interface Thought {
   createdAt: string;
   updatedAt: string;
   verified?: boolean;
+  verifiedAt?: string;        // ISO timestamp
   verificationNotes?: string;
+  verificationMethod?: string; // e.g. "manual_test", "stress_test", "code_review", "automated_test"
   movedAt?: string;
   metadata?: Record<string, any>;
   normalizedName?: string; // Clean slug without suffix for LLM reference

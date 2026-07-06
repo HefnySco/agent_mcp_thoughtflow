@@ -813,6 +813,9 @@ export class ToTService extends BaseService {
     risk?: number;
     criteriaScores?: Record<string, number>;
     reasoning?: string;
+    verified?: boolean;
+    verificationNotes?: string;
+    verificationMethod?: string;
   }): any {
     validateRequiredString(params.treeId, 'treeId');
     validateRequiredString(params.thoughtId, 'thoughtId');
@@ -860,6 +863,20 @@ export class ToTService extends BaseService {
     if (params.reasoning) {
       thought.metadata = thought.metadata || {};
       thought.metadata.evaluationReasoning = params.reasoning;
+    }
+    
+    // Handle verification fields
+    if (params.verified !== undefined) {
+      thought.verified = params.verified;
+      if (params.verified && !thought.verifiedAt) {
+        thought.verifiedAt = new Date().toISOString();
+      }
+    }
+    if (params.verificationNotes !== undefined) {
+      thought.verificationNotes = params.verificationNotes;
+    }
+    if (params.verificationMethod !== undefined) {
+      thought.verificationMethod = params.verificationMethod;
     }
     
     thought.updatedAt = new Date().toISOString();
@@ -974,6 +991,7 @@ export class ToTService extends BaseService {
     treeId: string;
     thoughtId: string;
     verificationNotes?: string;
+    verificationMethod?: string;
   }): any {
     const tree = this.getTreeFull(params.treeId);
     
@@ -1002,8 +1020,14 @@ export class ToTService extends BaseService {
     }
     
     thought.verified = true;
+    if (!thought.verifiedAt) {
+      thought.verifiedAt = new Date().toISOString();
+    }
     if (params.verificationNotes) {
       thought.verificationNotes = params.verificationNotes;
+    }
+    if (params.verificationMethod) {
+      thought.verificationMethod = params.verificationMethod;
     }
     thought.updatedAt = new Date().toISOString();
     tree.updatedAt = new Date().toISOString();
