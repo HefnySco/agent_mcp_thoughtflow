@@ -104,6 +104,29 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // API endpoint to clear state
+  if (url.pathname === '/api/state/clear' && req.method === 'POST') {
+    try {
+      const emptyState = {
+        strategies: {},
+        tasks: {},
+        trees: {},
+        workflows: {},
+        workflowRuns: {},
+        cognitiveLinks: {}
+      };
+      
+      fs.writeFileSync(STATE_FILE, JSON.stringify(emptyState, null, 2));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'State cleared successfully' }));
+    } catch (error) {
+      console.error('Error clearing state:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to clear state' }));
+    }
+    return;
+  }
+
   // Serve static files from public directory
   if (url.pathname === '/' || url.pathname === '/dashboard') {
     const filePath = path.join(__dirname, '..', 'public', 'dashboard.html');
