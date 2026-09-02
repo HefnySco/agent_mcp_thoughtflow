@@ -119,6 +119,7 @@ export interface Workflow {
   metadata?: Record<string, any>;
   isDeleted?: boolean;
   deletedAt?: string | null;
+  LLM_instruction?: string;
 }
 
 export interface WorkflowRun {
@@ -215,7 +216,7 @@ export interface PromoteThoughtToTasksParams {
   thoughtId: string;
   includeDescendants?: boolean;
   flattenHierarchy?: boolean;
-  workflowId: string; // Mandatory: tasks must belong to exactly one workflow
+  workflowId?: string; // Optional: auto-created (under the 'scratch' strategy) when omitted
   taskNamePrefix?: string;
   skipEvaluationGate?: boolean; // If true, skip the evaluate+select cycle for simple workflows
 }
@@ -225,6 +226,7 @@ export interface PromoteThoughtToTasksResult {
   workflowId?: string;
   thoughtsPromoted: number;
   hierarchyPreserved: boolean;
+  LLM_instruction?: string;
 }
 
 export interface SpawnTotFromTaskParams {

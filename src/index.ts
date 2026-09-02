@@ -133,6 +133,7 @@ class ThoughtflowServer {
     this.toolRegistry.registerBatch(taskToolDefinitions.map(def => ({
       name: def.name,
       tool: def.tool,
+      paramSpec: def.paramSpec,
       handler: (args: any) => def.handler(args, this.taskService)
     })));
 
@@ -140,6 +141,7 @@ class ThoughtflowServer {
     this.toolRegistry.registerBatch(totToolDefinitions.map(def => ({
       name: def.name,
       tool: def.tool,
+      paramSpec: def.paramSpec,
       handler: (args: any) => def.handler(args, this.totService)
     })));
 
@@ -147,54 +149,72 @@ class ThoughtflowServer {
     this.toolRegistry.registerBatch(bridgeToolDefinitions.map(def => ({
       name: def.name,
       tool: def.tool,
+      paramSpec: def.paramSpec,
       handler: (args: any) => def.handler(args, this.bridgeService)
     })));
 
-    // Register server-level utility tools
+    // Register server-wide maintenance tool
     this.toolRegistry.register(
-      'reload_state',
+      'admin',
       {
-        name: 'reload_state',
-        description: 'Reload state from storage and share it across all services. Useful after manually deleting or editing the state file.',
+        name: 'admin',
+        description: 'Server-wide maintenance: clear_all (soft-delete all tasks/workflows/runs/strategies), purge_deleted (permanently remove soft-deleted items), restore_deleted (undo a soft-delete), reload_state (reload from the storage file), or clear_state (wipe storage + all in-memory state). Pick one via `action`.',
         inputSchema: {
           type: 'object',
-          properties: {}
+          properties: {
+            action: { type: 'string', enum: ['clear_all', 'purge_deleted', 'restore_deleted', 'reload_state', 'clear_state'], description: 'Which operation to perform' },
+            entityType: {
+              type: 'string',
+              description: 'Entity type, for purge_deleted ("task", "workflow", "tree", "strategy", "link", "workflow_run", or "all" [default]) or restore_deleted ("task", "workflow", "tree", "strategy", "link")',
+              enum: ['task', 'workflow', 'tree', 'strategy', 'link', 'workflow_run', 'all']
+            },
+            id: { type: 'string', description: 'Entity ID to restore, for restore_deleted' },
+            olderThanDays: { type: 'number', description: 'Only purge items deleted more than this many days ago, for purge_deleted. If omitted, purges all soft-deleted items.' }
+          },
+          required: ['action']
         }
       },
-      async () => {
-        const sharedState = await this.storageAdapter.load();
-        this.taskService.setState(sharedState);
-        this.totService.setState(sharedState);
-        this.bridgeService.setState(sharedState);
-        return { success: true };
-      }
-    );
-
-    this.toolRegistry.register(
-      'clear_state',
-      {
-        name: 'clear_state',
-        description: 'Clear all state from storage and memory. This deletes the state file and resets all services to empty state. Useful for starting fresh without restarting the server.',
-        inputSchema: {
-          type: 'object',
-          properties: {}
+      async (args: any) => {
+        switch (args.action) {
+          case 'clear_all':
+            await this.taskService.clearAll();
+            return { success: true };
+          case 'purge_deleted':
+            return this.taskService.purgeDeleted(args.entityType, args.olderThanDays);
+          case 'restore_deleted':
+            return { restored: this.taskService.restoreDeleted(args.entityType, args.id) };
+          case 'reload_state': {
+            const sharedState = await this.storageAdapter.load();
+            this.taskService.setState(sharedState);
+            this.totService.setState(sharedState);
+            this.bridgeService.setState(sharedState);
+            return { success: true };
+          }
+          case 'clear_state': {
+            await this.storageAdapter.clear();
+            const emptyState = {
+              tasks: new Map(),
+              workflows: new Map(),
+              workflowRuns: new Map(),
+              strategies: new Map(),
+              trees: new Map(),
+              cognitiveLinks: new Map()
+            };
+            this.taskService.setState(emptyState);
+            this.totService.setState(emptyState);
+            this.bridgeService.setState(emptyState);
+            return { success: true, message: 'State cleared successfully' };
+          }
+          default:
+            throw new Error(`Unknown admin action: '${args.action}'. Expected one of: clear_all, purge_deleted, restore_deleted, reload_state, clear_state.`);
         }
       },
-      async () => {
-        await this.storageAdapter.clear();
-        const emptyState = {
-          tasks: new Map(),
-          workflows: new Map(),
-          workflowRuns: new Map(),
-          strategies: new Map(),
-          trees: new Map(),
-          cognitiveLinks: new Map()
-        };
-        this.taskService.setState(emptyState);
-        this.totService.setState(emptyState);
-        this.bridgeService.setState(emptyState);
-        return { success: true, message: 'State cleared successfully' };
-      }
+      [
+        { canonical: 'action', type: 'string' },
+        { canonical: 'entityType', type: 'string' },
+        { canonical: 'id', type: 'string' },
+        { canonical: 'olderThanDays', type: 'number' }
+      ]
     );
 
     logger.info(`Registered ${this.toolRegistry.size()} tools`);
@@ -215,7 +235,7 @@ class ThoughtflowServer {
         // Route to appropriate service based on tool name
         let result: any;
         
-        if (name === 'reload_state' || name === 'clear_state') {
+        if (name === 'admin') {
           result = await this.toolRegistry.execute(name, args, null);
         } else if (taskToolDefinitions.some(def => def.name === name)) {
           result = await this.toolRegistry.execute(name, args, this.taskService);

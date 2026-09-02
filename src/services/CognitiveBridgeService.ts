@@ -58,22 +58,36 @@ export class CognitiveBridgeService extends BaseService {
   promoteThoughtToTasks(params: PromoteThoughtToTasksParams): PromoteThoughtToTasksResult {
     validateRequiredString(params.treeId, 'treeId');
     validateRequiredString(params.thoughtId, 'thoughtId');
-    validateRequiredString(params.workflowId, 'workflowId');
-    
+
     const tree = this.totService.getTreeFull(params.treeId);
     if (!tree) {
       throw new TreeNotFoundError(params.treeId);
     }
-    
+
     const thought = tree.thoughts.get(params.thoughtId);
     if (!thought) {
       throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
     }
-    
+
+    // No workflow given - auto-create one under a fresh implicit strategy
+    // rather than erroring back to the caller
+    const workflowWasImplicit = !params.workflowId;
+    let workflowId = params.workflowId;
+    if (!workflowId) {
+      const strategyId = this.createImplicitStrategy(tree.goal).id;
+      const createdWorkflow = this.taskService.createWorkflow({
+        name: `${tree.goal} - ${params.thoughtId}`,
+        description: `Auto-created workflow for tasks promoted from thought '${params.thoughtId}' in tree '${params.treeId}'`,
+        taskIds: [],
+        strategyId
+      });
+      workflowId = createdWorkflow.id;
+    }
+
     // Check if already promoted to this workflow (idempotency)
     const cognitiveMeta = thought.metadata?.cognitive as CognitiveMetadata;
-    if (cognitiveMeta?.promotedToTaskIds && cognitiveMeta.promotedToTaskIds.length > 0 && cognitiveMeta.workflowId === params.workflowId) {
-      logger.info(`Thought ${params.thoughtId} already promoted to tasks in workflow ${params.workflowId}`);
+    if (cognitiveMeta?.promotedToTaskIds && cognitiveMeta.promotedToTaskIds.length > 0 && cognitiveMeta.workflowId === workflowId) {
+      logger.info(`Thought ${params.thoughtId} already promoted to tasks in workflow ${workflowId}`);
       return {
         taskIds: cognitiveMeta.promotedToTaskIds,
         workflowId: cognitiveMeta.workflowId,
@@ -81,7 +95,7 @@ export class CognitiveBridgeService extends BaseService {
         hierarchyPreserved: true
       };
     }
-    
+
     const includeDescendants = params.includeDescendants !== false;
     const flattenHierarchy = params.flattenHierarchy === true;
     const taskNamePrefix = params.taskNamePrefix || '';
@@ -106,7 +120,7 @@ export class CognitiveBridgeService extends BaseService {
         name: taskName,
         description: thoughtToPromote.content,
         dependencies: [],
-        workflowId: params.workflowId, // Mandatory
+        workflowId: workflowId, // Mandatory
         metadata: {
           cognitive: {
             sourceThoughtId: thoughtToPromote.id,
@@ -127,7 +141,7 @@ export class CognitiveBridgeService extends BaseService {
       thoughtCognitive.promotedToTaskIds = thoughtCognitive.promotedToTaskIds || [];
       this.addUniqueIdToArray(thoughtCognitive.promotedToTaskIds, newTask.id);
       thoughtCognitive.promotedAt = now;
-      thoughtCognitive.workflowId = params.workflowId;
+      thoughtCognitive.workflowId = workflowId;
       
       // Add provenance entry
       thoughtCognitive.provenanceChain = thoughtCognitive.provenanceChain || [];
@@ -155,7 +169,7 @@ export class CognitiveBridgeService extends BaseService {
     tree.updatedAt = now;
     this.triggerSave();
     
-    logger.info(`Promoted ${thoughtsToPromote.length} thoughts to ${taskIds.length} tasks in workflow ${params.workflowId}`);
+    logger.info(`Promoted ${thoughtsToPromote.length} thoughts to ${taskIds.length} tasks in workflow ${workflowId}`);
 
     // After successful promotion, mark thoughts as selected/verified
     // Skip evaluation gate if requested for simple workflows
@@ -163,9 +177,12 @@ export class CognitiveBridgeService extends BaseService {
 
     return {
       taskIds,
-      workflowId: params.workflowId,
+      workflowId: workflowId,
       thoughtsPromoted: thoughtsToPromote.length,
-      hierarchyPreserved: !flattenHierarchy
+      hierarchyPreserved: !flattenHierarchy,
+      ...(workflowWasImplicit ? {
+        LLM_instruction: `No workflowId was provided, so a new workflow '${workflowId}' was created. Pass workflowId: '${workflowId}' on subsequent promote_thought_to_tasks/create_tasks calls to keep this work grouped together, instead of omitting it again (which mints yet another new workflow).`
+      } : {})
     };
   }
 

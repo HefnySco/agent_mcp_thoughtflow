@@ -126,17 +126,19 @@ export class ToTService extends BaseService {
     rootContent: string;
     maxDepth?: number;
     sessionId?: string;
-    strategyId: string; // Mandatory
+    strategyId?: string; // Optional - defaults to the implicit 'scratch' strategy
     metadata?: Record<string, any>;
   }): Tree {
     validateRequiredString(params.goal, 'goal');
     validateRequiredString(params.rootContent, 'rootContent');
-    validateRequiredString(params.strategyId, 'strategyId');
 
-    // Validate strategy exists
-    const strategy = this.state.strategies.get(params.strategyId);
+    const strategyWasImplicit = !params.strategyId;
+    const strategyId = params.strategyId || this.createImplicitStrategy(params.goal).id;
+
+    // Validate strategy exists (only reachable if an explicit, unknown strategyId was passed)
+    const strategy = this.state.strategies.get(strategyId);
     if (!strategy) {
-      throw new ThoughtflowError(`Strategy '${params.strategyId}' not found`, 'STRATEGY_NOT_FOUND');
+      throw new ThoughtflowError(`Strategy '${strategyId}' not found`, 'STRATEGY_NOT_FOUND');
     }
 
     // Normalize the goal for comparison
@@ -148,7 +150,7 @@ export class ToTService extends BaseService {
         // Only return existing tree if it has thoughts (not a stale empty tree)
         if (existingTree.thoughts.size > 0) {
           logger.info(`Returning existing tree: ${id} - ${existingTree.goal} (normalized: ${normalizedGoal})`);
-          return { id: existingTree.id, goal: existingTree.goal, rootId: existingTree.rootId, normalizedName: this.slugify(existingTree.goal) } as any;
+          return { id: existingTree.id, goal: existingTree.goal, rootId: existingTree.rootId, normalizedName: this.slugify(existingTree.goal), strategyId: existingTree.strategyId } as any;
         } else {
           logger.info(`Deleting stale empty tree: ${id} - ${existingTree.goal} (normalized: ${normalizedGoal})`);
           this.state.trees.delete(id);
@@ -200,7 +202,7 @@ export class ToTService extends BaseService {
       createdAt: now,
       updatedAt: now,
       maxDepth: params.maxDepth || 10,
-      strategyId: params.strategyId,
+      strategyId,
       metadata: treeMetadata
     };
 
@@ -210,19 +212,29 @@ export class ToTService extends BaseService {
     if (!strategy.treeIds.includes(treeId)) {
       strategy.treeIds.push(treeId);
       strategy.updatedAt = now;
-      this.state.strategies.set(params.strategyId, strategy);
+      this.state.strategies.set(strategyId, strategy);
     }
 
     this.triggerSave();
-    logger.info(`Created tree: ${treeId} - ${params.goal} (normalized: ${normalizedGoal}) in strategy ${params.strategyId}`);
+    logger.info(`Created tree: ${treeId} - ${params.goal} (normalized: ${normalizedGoal}) in strategy ${strategyId}`);
 
     // Enforce cognitive hierarchy if cognitiveBridgeService is available
     if (this.cognitiveBridgeService) {
       this.cognitiveBridgeService.ensureCognitiveHierarchy(tree, 'tree', params.goal);
     }
 
-    // Return with both id and normalizedName
-    return { id: treeId, goal: params.goal, rootId, normalizedName: this.slugify(params.goal) } as any;
+    // Return with both id and normalizedName, always including the resolved
+    // strategyId so the caller can reuse it - critical when it was implicitly created
+    return {
+      id: treeId,
+      goal: params.goal,
+      rootId,
+      normalizedName: this.slugify(params.goal),
+      strategyId,
+      ...(strategyWasImplicit ? {
+        LLM_instruction: `No strategyId was provided, so a new strategy '${strategyId}' was created. Pass strategyId: '${strategyId}' on subsequent create_tree/create_workflow/create_tasks calls to keep this work grouped together, instead of omitting it again (which mints yet another new strategy).`
+      } : {})
+    } as any;
   }
 
   /**

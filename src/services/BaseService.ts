@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { IStorageAdapter, ThoughtflowState } from '../storage/IStorageAdapter.js';
+import type { Strategy } from '../types/index.js';
 import { ThoughtflowError } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 
@@ -181,6 +182,38 @@ export abstract class BaseService {
     }
     
     return slugWithSuffix;
+  }
+
+  /**
+   * Mint a fresh implicit strategy when a tool call omits strategyId/workflowId
+   * at a root entry point (create_workflow, create_tree, create_tasks,
+   * promote_thought_to_tasks). Unlike a get-or-create singleton, this always
+   * creates a NEW strategy so unrelated sessions/calls don't silently pile
+   * into one shared bucket. The caller is expected to surface the returned
+   * id back to the LLM (as `strategyId`/`workflowId` plus an LLM_instruction)
+   * so it can be reused on subsequent related calls to keep that work grouped.
+   */
+  protected createImplicitStrategy(hint?: string): Strategy {
+    const existingIds = new Set(this.state.strategies.keys());
+    const id = this.generateSlugId(`scratch-${hint || 'session'}`, existingIds);
+    const now = new Date().toISOString();
+
+    const strategy: Strategy = {
+      id,
+      name: id,
+      description: 'Implicit strategy auto-created because no strategyId was provided. Reuse this id on later calls to keep related work grouped together.',
+      status: 'active',
+      treeIds: [],
+      workflowIds: [],
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.state.strategies.set(id, strategy);
+    this.triggerSave();
+    logger.info(`Created implicit strategy '${id}' as default`);
+
+    return strategy;
   }
 
   /**

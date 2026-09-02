@@ -58,23 +58,6 @@ export class TaskOrchestratorService extends BaseService {
   }
 
   /**
-   * Get or create the 'scratch' strategy for standalone entities
-   */
-  private getOrCreateScratchStrategy(): Strategy {
-    const scratchId = this.normalizeKey('scratch');
-    let strategy = this.state.strategies.get(scratchId);
-    
-    if (!strategy) {
-      strategy = this.createStrategy({
-        name: 'scratch',
-        description: 'Default strategy for standalone tasks and trees when no strategy is specified'
-      });
-    }
-    
-    return strategy;
-  }
-
-  /**
    * Create a new task
    * REQUIRES workflowId - task must belong to exactly one workflow
    */
@@ -182,10 +165,11 @@ export class TaskOrchestratorService extends BaseService {
     workflowId?: string;
     strategyId?: string;
     deduplication?: 'skip' | 'error' | 'overwrite';
-  }): { 
-    tasks: Array<{ id: string; name: string; status: string }>; 
+  }): {
+    tasks: Array<{ id: string; name: string; status: string }>;
     idMap: Record<string, string>;
     workflowId?: string;
+    strategyId?: string;
     workflowCreated?: boolean;
     message?: string;
   } {
@@ -204,38 +188,33 @@ export class TaskOrchestratorService extends BaseService {
       // workflowId is provided - check if it exists
       workflow = this.state.workflows.get(params.workflowId);
       if (!workflow) {
-        // Workflow doesn't exist - require strategyId to auto-create it
-        if (!params.strategyId) {
-          throw new ThoughtflowError(
-            `Workflow '${params.workflowId}' does not exist. To auto-create a workflow, you must provide a strategyId parameter. Either create the workflow explicitly using create_workflow, or provide strategyId to allow auto-creation.`,
-            'WORKFLOW_NOT_FOUND'
-          );
-        }
-        // Auto-create workflow with provided strategyId
+        // Workflow doesn't exist - auto-create it, minting a fresh implicit
+        // strategy when none was given, instead of erroring back to the caller
+        const strategyIdForNewWorkflow = params.strategyId || this.createImplicitStrategy(params.workflowId).id;
         const createdWorkflow = this.createWorkflow({
           name: params.workflowId,
           description: `Auto-created workflow for tasks`,
           taskIds: [],
-          strategyId: params.strategyId
+          strategyId: strategyIdForNewWorkflow
         });
         // Get the full workflow object from state (createWorkflow returns minimal summary)
         workflow = this.state.workflows.get(createdWorkflow.id);
         workflowCreated = true;
-        message = `Workflow '${params.workflowId}' did not exist and was automatically created under strategy '${params.strategyId}'. The ${params.tasks.length} new tasks have been added to it. You can later use move_task to move any of these tasks to a different workflow, or rename the workflow if the name is not ideal.`;
-        effectiveStrategyId = params.strategyId;
+        message = `Workflow '${params.workflowId}' did not exist and was automatically created under strategy '${strategyIdForNewWorkflow}'. The ${params.tasks.length} new tasks have been added to it.${!params.strategyId ? ` Reuse strategyId: '${strategyIdForNewWorkflow}' on later calls to keep related work grouped together.` : ''} You can later use move_task to move any of these tasks to a different workflow, or rename the workflow if the name is not ideal.`;
+        effectiveStrategyId = strategyIdForNewWorkflow;
       } else {
         effectiveStrategyId = workflow.strategyId;
       }
     } else {
       // workflowId omitted - tasks will be standalone
-      // If strategyId is provided, use it; otherwise use 'scratch' strategy
+      // If strategyId is provided, use it; otherwise mint a fresh implicit strategy
       effectiveStrategyId = params.strategyId;
       if (!effectiveStrategyId) {
-        // Ensure 'scratch' strategy exists
-        const scratchStrategy = this.getOrCreateScratchStrategy();
-        effectiveStrategyId = scratchStrategy.id;
+        effectiveStrategyId = this.createImplicitStrategy(params.tasks[0]?.name).id;
+        message = `No strategyId was provided, so tasks were created standalone under a new strategy '${effectiveStrategyId}'. Reuse strategyId: '${effectiveStrategyId}' on later calls to keep related work grouped together. You can also add these tasks to a workflow using add_task_to_workflow.`;
+      } else {
+        message = `Tasks created as standalone. Associated with strategy '${effectiveStrategyId}'. You can later add them to a workflow using add_task_to_workflow.`;
       }
-      message = `Tasks created as standalone. Associated with strategy '${effectiveStrategyId}'. You can later add them to a workflow using add_task_to_workflow.`;
     }
 
     const deduplication = params.deduplication || 'skip';
@@ -398,23 +377,27 @@ export class TaskOrchestratorService extends BaseService {
       logger.info(`Processed ${resultTasks.length} standalone tasks in batch`);
     }
     
-    // Return enhanced response
-    const response: { 
-      tasks: Array<{ id: string; name: string; status: string }>; 
+    // Return enhanced response. strategyId is always surfaced so the caller can
+    // reuse it - critical when it was implicitly created (no strategyId/workflowId given)
+    const response: {
+      tasks: Array<{ id: string; name: string; status: string }>;
       idMap: Record<string, string>;
       workflowId?: string;
+      strategyId?: string;
       workflowCreated?: boolean;
       message?: string;
-    } = { tasks: resultTasks, idMap };
-    
+    } = { tasks: resultTasks, idMap, strategyId: effectiveStrategyId };
+
     if (params.workflowId) {
       response.workflowId = params.workflowId;
       if (workflowCreated) {
         response.workflowCreated = true;
         response.message = message;
       }
+    } else if (message) {
+      response.message = message;
     }
-    
+
     return response;
   }
 
@@ -586,22 +569,24 @@ export class TaskOrchestratorService extends BaseService {
     name: string;
     description?: string;
     taskIds: string[];
-    strategyId: string; // Mandatory
+    strategyId?: string; // Optional - defaults to the implicit 'scratch' strategy
     metadata?: Record<string, any>;
   }): Workflow {
     validateRequiredString(workflow.name, 'name');
-    validateRequiredString(workflow.strategyId, 'strategyId');
-    
+
+    const strategyWasImplicit = !workflow.strategyId;
+    const strategyId = workflow.strategyId || this.createImplicitStrategy(workflow.name).id;
+
     const existingIds = new Set(this.state.workflows.keys());
     const id = this.generateSlugId(workflow.name, existingIds);
     const now = new Date().toISOString();
-    
-    // Validate strategy exists
-    const strategy = this.state.strategies.get(workflow.strategyId);
+
+    // Validate strategy exists (only reachable if an explicit, unknown strategyId was passed)
+    const strategy = this.state.strategies.get(strategyId);
     if (!strategy) {
-      throw new ThoughtflowError(`Strategy '${workflow.strategyId}' not found`, 'STRATEGY_NOT_FOUND');
+      throw new ThoughtflowError(`Strategy '${strategyId}' not found`, 'STRATEGY_NOT_FOUND');
     }
-    
+
     // Validate all tasks exist and are not already owned by another workflow
     for (const taskId of workflow.taskIds) {
       const task = this.state.tasks.get(taskId);
@@ -625,33 +610,42 @@ export class TaskOrchestratorService extends BaseService {
       status: 'pending',
       createdAt: now,
       updatedAt: now,
-      strategyId: workflow.strategyId,
+      strategyId,
       metadata: workflow.metadata
     };
-    
+
     this.state.workflows.set(id, newWorkflow);
-    
+
     // Update all tasks to have this workflowId and strategyId
     for (const taskId of workflow.taskIds) {
       const task = this.state.tasks.get(taskId);
       if (task) {
         task.workflowId = id;
-        task.strategyId = workflow.strategyId;
+        task.strategyId = strategyId;
         this.state.tasks.set(taskId, task);
       }
     }
-    
+
     // Add workflow to strategy's workflowIds
     if (!strategy.workflowIds.includes(id)) {
       strategy.workflowIds.push(id);
       strategy.updatedAt = now;
-      this.state.strategies.set(workflow.strategyId, strategy);
+      this.state.strategies.set(strategyId, strategy);
     }
-    
+
     this.triggerSave();
-    logger.info(`Created workflow: ${id} - ${workflow.name} in strategy ${workflow.strategyId}`);
-    // Return minimal summary
-    return { id, name: newWorkflow.name, status: newWorkflow.status } as Workflow;
+    logger.info(`Created workflow: ${id} - ${workflow.name} in strategy ${strategyId}`);
+    // Return minimal summary, always including the resolved strategyId so the
+    // caller can reuse it - critical when it was implicitly created
+    return {
+      id,
+      name: newWorkflow.name,
+      status: newWorkflow.status,
+      strategyId,
+      ...(strategyWasImplicit ? {
+        LLM_instruction: `No strategyId was provided, so a new strategy '${strategyId}' was created. Pass strategyId: '${strategyId}' on subsequent create_workflow/create_tree/create_tasks calls to keep this work grouped together, instead of omitting it again (which mints yet another new strategy).`
+      } : {})
+    } as Workflow;
   }
 
   /**

@@ -1,4 +1,5 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { resolveArgs, ParamFieldSpec } from '../utils/paramResolver.js';
 
 /**
  * Tool handler function type
@@ -12,6 +13,12 @@ export type ToolHandler = (args: any, service: any) => Promise<any>;
 export interface ToolDefinition {
   tool: Tool;
   handler: ToolHandler;
+  /**
+   * Optional field spec used to normalize raw call arguments before the
+   * handler runs - accepts aliased names, positional args, and loose types
+   * instead of requiring the LLM to match the schema exactly.
+   */
+  paramSpec?: ParamFieldSpec[];
 }
 
 /**
@@ -24,16 +31,16 @@ export class ToolRegistry {
   /**
    * Register a tool with its handler
    */
-  register(name: string, tool: Tool, handler: ToolHandler): void {
-    this.tools.set(name, { tool, handler });
+  register(name: string, tool: Tool, handler: ToolHandler, paramSpec?: ParamFieldSpec[]): void {
+    this.tools.set(name, { tool, handler, paramSpec });
   }
 
   /**
    * Register multiple tools at once
    */
-  registerBatch(tools: { name: string; tool: Tool; handler: ToolHandler }[]): void {
-    tools.forEach(({ name, tool, handler }) => {
-      this.register(name, tool, handler);
+  registerBatch(tools: { name: string; tool: Tool; handler: ToolHandler; paramSpec?: ParamFieldSpec[] }[]): void {
+    tools.forEach(({ name, tool, handler, paramSpec }) => {
+      this.register(name, tool, handler, paramSpec);
     });
   }
 
@@ -66,7 +73,8 @@ export class ToolRegistry {
     if (!definition) {
       throw new Error(`Tool '${name}' not found`);
     }
-    return definition.handler(args, service);
+    const normalizedArgs = definition.paramSpec ? resolveArgs(args, definition.paramSpec) : args;
+    return definition.handler(normalizedArgs, service);
   }
 
   /**
