@@ -10,6 +10,12 @@ const __dirname = path.dirname(__filename);
 
 const DEFAULT_PORT = 8881;
 const STATE_FILE = path.join(__dirname, '..', 'thoughtflow-state.json');
+// Must match JsonStorageAdapter's deleteFlagPath convention (`${storagePath}.delete-flag`).
+// This dashboard process has no access to a live MCP server's in-memory state,
+// so it drops this sentinel to unambiguously tell that server "reject your own
+// memory, don't write it back" the next time it tries to autosave - instead of
+// just deleting the file and hoping the server's next save doesn't resurrect it.
+const DELETE_FLAG_FILE = `${STATE_FILE}.delete-flag`;
 
 // MIME types
 const mimeTypes: Record<string, string> = {
@@ -107,16 +113,22 @@ const server = http.createServer(async (req, res) => {
   // API endpoint to clear state
   if (url.pathname === '/api/state/clear' && req.method === 'POST') {
     try {
-      const emptyState = {
-        strategies: {},
-        tasks: {},
-        trees: {},
-        workflows: {},
-        workflowRuns: {},
-        cognitiveLinks: {}
-      };
-      
-      fs.writeFileSync(STATE_FILE, JSON.stringify(emptyState, null, 2));
+      // Drop the delete flag FIRST: if a live MCP server process is sharing
+      // this file, its next save attempt will see the flag, reject its own
+      // (now-stale) in-memory data instead of writing it back, delete the
+      // file itself, and consume the flag. Writing the flag before touching
+      // the file also closes the race where an autosave lands between our
+      // unlink and our flag-write.
+      fs.writeFileSync(DELETE_FLAG_FILE, new Date().toISOString());
+
+      // Also clear the file directly, for the common case where no live
+      // server is currently running to pick the flag up.
+      try {
+        fs.unlinkSync(STATE_FILE);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: 'State cleared successfully' }));
     } catch (error) {

@@ -23,6 +23,7 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
           strategyId: { type: 'string', description: 'Strategy ID, for create. Optional - if omitted, the tree is created under a new implicit strategy.' },
           metadata: { type: 'object', description: 'Additional metadata, for create' },
           includeDeleted: { type: 'boolean', description: 'Include soft-deleted trees, for get/list' },
+          detail: { type: 'string', enum: ['summary', 'full'], description: 'For action="get": "summary" (default) returns each thought as {id, content, parentId, children, state, evaluation, depth} - enough to reference and navigate. "full" additionally includes timestamps, verification fields, and metadata (e.g. evaluationReasoning) for every thought - only ask for this when you actually need that detail, it is much larger.' },
           threshold: { type: 'number', description: 'Evaluation threshold - thoughts below this will be pruned, for prune' },
           riskThreshold: { type: 'number', description: 'Optional risk threshold, for prune' }
         },
@@ -39,6 +40,7 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
       { canonical: 'strategyId', type: 'string' },
       { canonical: 'metadata', type: 'object' },
       { canonical: 'includeDeleted', type: 'boolean' },
+      { canonical: 'detail', type: 'string' },
       { canonical: 'threshold', type: 'number' },
       { canonical: 'riskThreshold', type: 'number' }
     ],
@@ -47,8 +49,31 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
         case 'create': return service.createTree(args);
         case 'get': {
           const tree = service.getTreeFull(args.id, args.includeDeleted);
-          // Convert thoughts Map to object for JSON serialization
-          return { ...tree, thoughts: Object.fromEntries(tree.thoughts) };
+          if (args.detail === 'full') {
+            // Convert thoughts Map to object for JSON serialization
+            return { ...tree, thoughts: Object.fromEntries(tree.thoughts) };
+          }
+          // Default: minimal per-thought summaries - just enough to reference and navigate
+          const thoughts: Record<string, any> = {};
+          for (const [id, t] of tree.thoughts) {
+            thoughts[id] = {
+              id: t.id,
+              content: t.content,
+              parentId: t.parentId,
+              children: t.children,
+              state: t.state,
+              evaluation: t.evaluation,
+              depth: t.depth
+            };
+          }
+          return {
+            id: tree.id,
+            goal: tree.goal,
+            rootId: tree.rootId,
+            maxDepth: tree.maxDepth,
+            strategyId: tree.strategyId,
+            thoughts
+          };
         }
         case 'list': return service.listTrees(args.includeDeleted);
         case 'delete': return service.deleteTree(args.id);
