@@ -365,14 +365,22 @@
       const deletedStrategies = state.strategies?.filter(s => s.isDeleted) || [];
       const totalDeleted = deletedTasks.length + deletedWorkflows.length + deletedTrees.length + deletedStrategies.length;
 
+      // Use active or all items based on showDeleted flag
+      const displayStrategies = showDeleted ? state.strategies : activeStrategies;
+      const displayTrees = showDeleted ? state.trees : activeTrees;
+      const displayTasks = showDeleted ? state.tasks : activeTasks;
+      const displayWorkflows = showDeleted ? state.workflows : activeWorkflows;
+      const displayLinks = showDeleted ? state.cognitiveLinks : activeLinks;
+
       // Filter items based on selected strategy for overview cards
-      let filteredTreesForOverview = activeTrees || [];
-      let filteredWorkflowsForOverview = activeWorkflows || [];
-      let filteredTasksForOverview = activeTasks || [];
-      let filteredLinksForOverview = activeLinks || [];
-      
+      // (respects showDeleted so the summary cards agree with the lists below)
+      let filteredTreesForOverview = displayTrees || [];
+      let filteredWorkflowsForOverview = displayWorkflows || [];
+      let filteredTasksForOverview = displayTasks || [];
+      let filteredLinksForOverview = displayLinks || [];
+
       if (selectedStrategyId) {
-        const selectedStrategy = activeStrategies?.find(s => s.id === selectedStrategyId);
+        const selectedStrategy = displayStrategies?.find(s => s.id === selectedStrategyId);
         if (selectedStrategy) {
           if (selectedStrategy.treeIds) {
             filteredTreesForOverview = filteredTreesForOverview.filter(t => selectedStrategy.treeIds.includes(t.id));
@@ -397,7 +405,7 @@
       }
 
       // Update overview cards (show filtered items based on selected strategy)
-      document.getElementById('total-strategies').textContent = activeStrategies.length;
+      document.getElementById('total-strategies').textContent = displayStrategies.length;
       document.getElementById('total-trees').textContent = filteredTreesForOverview.length;
       document.getElementById('total-tasks').textContent = filteredTasksForOverview.length;
       document.getElementById('total-workflows').textContent = filteredWorkflowsForOverview.length;
@@ -424,24 +432,24 @@
         }
       }
 
-      // Use active or all items based on showDeleted flag
-      const displayStrategies = showDeleted ? state.strategies : activeStrategies;
-      const displayTrees = showDeleted ? state.trees : activeTrees;
-      const displayTasks = showDeleted ? state.tasks : activeTasks;
-      const displayWorkflows = showDeleted ? state.workflows : activeWorkflows;
-      const displayLinks = showDeleted ? state.cognitiveLinks : activeLinks;
-
       // Count promoted tasks (from active tasks only)
       const promotedTasks = activeTasks?.filter(t => t.metadata?.cognitive?.sourceThoughtId) || [];
       document.getElementById('total-promoted').textContent = promotedTasks.length;
 
-      // Update task status breakdown (use displayTasks)
-      const tasks = displayTasks || [];
+      // Update task status breakdown (use displayTasks, filtered by selected strategy)
+      // A task belongs to a strategy directly via task.strategyId, whether or not
+      // it's part of a workflow - standalone tasks (no workflowId) only show up here.
+      let tasks = displayTasks || [];
+      let deletedTasksForCount = deletedTasks;
+      if (selectedStrategyId) {
+        tasks = tasks.filter(t => t.strategyId === selectedStrategyId);
+        deletedTasksForCount = deletedTasksForCount.filter(t => t.strategyId === selectedStrategyId);
+      }
       const pending = tasks.filter(t => t.status === 'pending').length;
       const inProgress = tasks.filter(t => t.status === 'in_progress').length;
       const completed = tasks.filter(t => t.status === 'completed').length;
       const failed = tasks.filter(t => t.status === 'failed').length;
-      const deleted = deletedTasks.length;
+      const deleted = deletedTasksForCount.length;
 
       document.getElementById('tasks-pending').textContent = pending;
       document.getElementById('tasks-in_progress').textContent = inProgress;
@@ -615,7 +623,9 @@
           `;
         }).join('');
       } else {
-        tasksList.innerHTML = '<p class="text-gray-500 text-sm">No tasks</p>';
+        tasksList.innerHTML = selectedStrategyId
+          ? '<p class="text-gray-500 text-sm">No tasks associated with selected strategy</p>'
+          : '<p class="text-gray-500 text-sm">No tasks</p>';
       }
 
       // Update trees list with nested thoughts (collapsible tree)
