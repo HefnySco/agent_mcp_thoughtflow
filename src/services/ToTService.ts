@@ -73,20 +73,20 @@ function findClosestMatches(
  */
 const STRATEGY_LLM_INSTRUCTION = `Strategy Usage Rules:
 - One Strategy = one cohesive goal/project area.
-- Use create_strategy as get-or-create (idempotent by normalized name).
+- Use \`strategy\` action="create" as get-or-create (idempotent by normalized name).
 - Add Trees for divergent reasoning/exploration. Create or use an existing Tree before adding ideas.
 - Add Workflows for convergent execution with tasks. Create or use an existing workflow before creating tasks.
-- CRITICAL: When creating MULTIPLE related tasks or ideas, ALWAYS use batch tools:
-  * Use create_tasks (not create_task) for tasks - supports positional refs (task-1, task-2) for dependencies/parentTaskId
-  * Use add_ideas (not add_idea) for thoughts - supports positional refs (idea-1, idea-2) for parentId
-  * Single-item tools (create_task, add_idea) are NOT available.
-  * Batch tools return an idMap mapping positional refs to real IDs for later reference.
+- CRITICAL: When creating MULTIPLE related tasks or ideas, ALWAYS use batch actions:
+  * Use \`task\` action="create" with a \`tasks\` array - supports positional refs (task-1, task-2) for dependencies/parentTaskId
+  * Use \`thought\` action="add_ideas" (or "compare_options") with an \`ideas\`/\`options\` array - supports positional refs (idea-1, idea-2) for parentId
+  * There is no single-item create action for either - always pass an array, even for one item.
+  * Batch actions return an idMap mapping positional refs to real IDs for later reference.
 - When adding ideas to a tree, use parentId: 'root' or the actual rootId returned when the tree was created.
 - When adding child ideas, prefer parentId: 'root' for the tree root.
-- Promote promising thoughts to tasks. If a task blocks, spawn new Tree from it.
+- Promote promising thoughts to tasks via \`bridge\` action="promote_to_tasks". If a task blocks, spawn a new Tree from it via \`bridge\` action="spawn_tot_from_task".
 - Maintain strict isolation: do not mix tasks or workflows across different Strategies.
-- Use Cognitive Bridge for provenance (link/promote/spawn).
-- CRITICAL: When using evaluate_thought, the score parameter MUST be a numeric value between 0 and 100 (not a string). Always pass score as a number type.`;
+- Use the \`bridge\` tool for provenance (action="link_to_task"/"promote_to_tasks"/"spawn_tot_from_task"/"get_provenance").
+- CRITICAL: When using \`thought\` action="evaluate", the score parameter MUST be a numeric value between 0 and 100 (not a string). Always pass score as a number type.`;
 
 export interface ToTServiceConfig {
   llmProvider?: LLMProvider | null;
@@ -232,7 +232,7 @@ export class ToTService extends BaseService {
       normalizedName: this.slugify(params.goal),
       strategyId,
       ...(strategyWasImplicit ? {
-        LLM_instruction: `No strategyId was provided, so a new strategy '${strategyId}' was created. Pass strategyId: '${strategyId}' on subsequent create_tree/create_workflow/create_tasks calls to keep this work grouped together, instead of omitting it again (which mints yet another new strategy).`
+        LLM_instruction: `No strategyId was provided, so a new strategy '${strategyId}' was created. Pass strategyId: '${strategyId}' on subsequent \`tree\`/\`workflow\`/\`task\` action="create" calls to keep this work grouped together, instead of omitting it again (which mints yet another new strategy).`
       } : {})
     } as any;
   }
@@ -912,7 +912,7 @@ export class ToTService extends BaseService {
       response.stateTransitioned = true;
       response.previousState = previousState;
       response.newState = thought.state;
-      response.message = "Thought has been evaluated and automatically moved from 'pending' to 'evaluated' state. You can now safely call select_thought on it or continue exploring its children.";
+      response.message = "Thought has been evaluated and automatically moved from 'pending' to 'evaluated' state. You can now safely call `thought` action='select' on it or continue exploring its children.";
     } else {
       response.message = "Thought has been evaluated. It was already in an evaluated or selected state.";
     }
@@ -938,7 +938,7 @@ export class ToTService extends BaseService {
 
   /**
    * Batch evaluate multiple thoughts
-   * Consistent with batch pattern in add_ideas/create_tasks
+   * Consistent with batch pattern in `thought` action="add_ideas" / `task` action="create"
    */
   batchEvaluateThoughts(params: {
     evaluations: Array<{
@@ -1058,7 +1058,7 @@ export class ToTService extends BaseService {
       response.stateTransitioned = true;
       response.previousState = previousState;
       response.newState = thought.state;
-      response.message = "Thought has been verified and automatically moved from 'pending' to 'evaluated' state. You can now safely call select_thought on it or continue exploring its children.";
+      response.message = "Thought has been verified and automatically moved from 'pending' to 'evaluated' state. You can now safely call `thought` action='select' on it or continue exploring its children.";
     } else {
       response.message = "Thought has been verified. It was already in an evaluated or selected state.";
     }

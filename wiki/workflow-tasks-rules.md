@@ -86,13 +86,14 @@ Strategy (1)
 
 ### Use Batch Creation Only
 
-**Rule**: Always use `create_tasks` (batch) for creating tasks. Single-item `create_task` is not available.
+**Rule**: Always use the `task` tool's `create` action (batch) for creating tasks. There is no single-item action.
 
 **Why**: Batch creation is more efficient, supports positional references, and provides consistent return values.
 
 **Example**:
 ```json
 {
+  "action": "create",
   "tasks": [
     {
       "name": "Design cache schema",
@@ -167,12 +168,12 @@ Strategy (1)
 
 ### Workflow Execution Lifecycle
 
-**Rule**: Use `start_workflow_execution` to begin execution, then `advance_workflow_run` to progress.
+**Rule**: Use the `workflow_run` tool's `start` action to begin execution, then its `advance` action to progress.
 
 **Lifecycle**:
-1. **Start**: `start_workflow_execution` creates a workflow run
+1. **Start**: `workflow_run` action="start" creates a workflow run
 2. **Execute**: Agent executes ready tasks (no pending dependencies)
-3. **Advance**: `advance_workflow_run` marks completed tasks, unlocks new ready tasks
+3. **Advance**: `workflow_run` action="advance" marks completed tasks, unlocks new ready tasks
 4. **Complete**: When all tasks are completed or failed
 
 **Workflow Run Properties**:
@@ -191,22 +192,22 @@ Strategy (1)
 - All dependencies are completed
 - No circular dependencies
 
-**Tool**: `getReadyTasks` returns currently ready tasks for a workflow.
+**Note**: There is no separate "getReadyTasks" tool — `readyTasks` is a field returned by `workflow_run` action="start" (and deltas by action="advance").
 
 **Usage Pattern**:
 ```json
 // 1. Start execution
-start_workflow_execution({ "workflowId": "workflow-123" })
+workflow_run({ "action": "start", "workflowId": "workflow-123" })
 // Returns: { runId, readyTasks: ["task-1", "task-3"] }
 
 // 2. Execute ready tasks (agent does work)
 
 // 3. Mark tasks as completed
-update_task({ "id": "task-1", "status": "completed" })
-update_task({ "id": "task-3", "status": "completed" })
+task({ "action": "update", "id": "task-1", "status": "completed" })
+task({ "action": "update", "id": "task-3", "status": "completed" })
 
 // 4. Advance to unlock next tasks
-advance_workflow_run({ "runId": "run-456" })
+workflow_run({ "action": "advance", "id": "run-456" })
 // Returns: { newlyReadyTasks: ["task-2"], newlyCompletedTasks: ["task-1", "task-3"] }
 ```
 
@@ -243,7 +244,7 @@ Task: "Implement API" (pending)
 └── Subtask 3: "Add rate limiting" (in_progress)
 
 // When Subtask 3 is marked as completed:
-update_task({ "id": "task-3", "status": "completed" })
+task({ "action": "update", "id": "task-3", "status": "completed" })
 // → Parent "Implement API" automatically becomes completed
 // → If parent has a parent, that grandparent is also checked
 ```
@@ -289,7 +290,7 @@ update_task({ "id": "task-3", "status": "completed" })
 
 ### Moving Tasks
 
-**Rule**: Use `move_task` to change a task's parent or order.
+**Rule**: Use the `task` tool's `move` action to change a task's parent or order.
 
 **Parameters**:
 - **taskId**: Task to move
@@ -308,7 +309,7 @@ update_task({ "id": "task-3", "status": "completed" })
 
 ### 2. Use Batch Creation
 
-- Always create multiple related tasks in one `create_tasks` call
+- Always create multiple related tasks in one `task` action="create" call
 - Use positional references for dependencies and subtasks
 - Leverage deduplication to avoid redundant tasks
 

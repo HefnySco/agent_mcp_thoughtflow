@@ -20,17 +20,17 @@ import { validateRequiredString, validateId } from '../utils/validators.js';
  */
 const STRATEGY_LLM_INSTRUCTION = `Strategy Usage Rules:
 - One Strategy = one cohesive goal/project area.
-- Use create_strategy as get-or-create (idempotent by normalized name).
+- Use \`strategy\` action="create" as get-or-create (idempotent by normalized name).
 - Add Trees for divergent reasoning/exploration. Create or use an existing Tree before adding ideas.
 - Add Workflows for convergent execution with tasks. Create or use an existing workflow before creating tasks.
-- CRITICAL: When creating MULTIPLE related tasks or ideas, ALWAYS use batch tools:
-  * Use create_tasks (not create_task) for tasks - supports positional refs (task-1, task-2) for dependencies/parentTaskId
-  * Use add_ideas (not add_idea) for thoughts - supports positional refs (idea-1, idea-2) for parentId
-  * Single-item tools (create_task, add_idea) are NOT available.
-  * Batch tools return an idMap mapping positional refs to real IDs for later reference.
-- Promote promising thoughts to tasks. If a task blocks, spawn new Tree from it.
+- CRITICAL: When creating MULTIPLE related tasks or ideas, ALWAYS use batch actions:
+  * Use \`task\` action="create" with a \`tasks\` array - supports positional refs (task-1, task-2) for dependencies/parentTaskId
+  * Use \`thought\` action="add_ideas" (or "compare_options") with an \`ideas\`/\`options\` array - supports positional refs (idea-1, idea-2) for parentId
+  * There is no single-item create action for either - always pass an array, even for one item.
+  * Batch actions return an idMap mapping positional refs to real IDs for later reference.
+- Promote promising thoughts to tasks via \`bridge\` action="promote_to_tasks". If a task blocks, spawn a new Tree from it via \`bridge\` action="spawn_tot_from_task".
 - Maintain strict isolation: do not mix tasks or workflows across different Strategies.
-- Use Cognitive Bridge for provenance (link/promote/spawn).`;
+- Use the \`bridge\` tool for provenance (action="link_to_task"/"promote_to_tasks"/"spawn_tot_from_task"/"get_provenance").`;
 
 /**
  * TaskOrchestratorService manages task execution with dependency tracking
@@ -200,7 +200,7 @@ export class TaskOrchestratorService extends BaseService {
         // Get the full workflow object from state (createWorkflow returns minimal summary)
         workflow = this.state.workflows.get(createdWorkflow.id);
         workflowCreated = true;
-        message = `Workflow '${params.workflowId}' did not exist and was automatically created under strategy '${strategyIdForNewWorkflow}'. The ${params.tasks.length} new tasks have been added to it.${!params.strategyId ? ` Reuse strategyId: '${strategyIdForNewWorkflow}' on later calls to keep related work grouped together.` : ''} You can later use move_task to move any of these tasks to a different workflow, or rename the workflow if the name is not ideal.`;
+        message = `Workflow '${params.workflowId}' did not exist and was automatically created under strategy '${strategyIdForNewWorkflow}'. The ${params.tasks.length} new tasks have been added to it.${!params.strategyId ? ` Reuse strategyId: '${strategyIdForNewWorkflow}' on later calls to keep related work grouped together.` : ''} You can later use \`task\` action="move" to move any of these tasks to a different workflow, or rename the workflow if the name is not ideal.`;
         effectiveStrategyId = strategyIdForNewWorkflow;
       } else {
         effectiveStrategyId = workflow.strategyId;
@@ -211,9 +211,9 @@ export class TaskOrchestratorService extends BaseService {
       effectiveStrategyId = params.strategyId;
       if (!effectiveStrategyId) {
         effectiveStrategyId = this.createImplicitStrategy(params.tasks[0]?.name).id;
-        message = `No strategyId was provided, so tasks were created standalone under a new strategy '${effectiveStrategyId}'. Reuse strategyId: '${effectiveStrategyId}' on later calls to keep related work grouped together. You can also add these tasks to a workflow using add_task_to_workflow.`;
+        message = `No strategyId was provided, so tasks were created standalone under a new strategy '${effectiveStrategyId}'. Reuse strategyId: '${effectiveStrategyId}' on later calls to keep related work grouped together. You can also add these tasks to a workflow using \`workflow\` action="add_task".`;
       } else {
-        message = `Tasks created as standalone. Associated with strategy '${effectiveStrategyId}'. You can later add them to a workflow using add_task_to_workflow.`;
+        message = `Tasks created as standalone. Associated with strategy '${effectiveStrategyId}'. You can later add them to a workflow using \`workflow\` action="add_task".`;
       }
     }
 
@@ -643,7 +643,7 @@ export class TaskOrchestratorService extends BaseService {
       status: newWorkflow.status,
       strategyId,
       ...(strategyWasImplicit ? {
-        LLM_instruction: `No strategyId was provided, so a new strategy '${strategyId}' was created. Pass strategyId: '${strategyId}' on subsequent create_workflow/create_tree/create_tasks calls to keep this work grouped together, instead of omitting it again (which mints yet another new strategy).`
+        LLM_instruction: `No strategyId was provided, so a new strategy '${strategyId}' was created. Pass strategyId: '${strategyId}' on subsequent \`workflow\`/\`tree\`/\`task\` action="create" calls to keep this work grouped together, instead of omitting it again (which mints yet another new strategy).`
       } : {})
     } as Workflow;
   }
@@ -1325,7 +1325,7 @@ export class TaskOrchestratorService extends BaseService {
    * Start execution of a workflow
    * Creates a workflow run and marks initially ready tasks as in_progress
    * Returns minimal task identifiers (id + status only) for maximum token efficiency
-   * Use get_task() when you need full task details like name/description
+   * Use `task` action="get" when you need full task details like name/description
    */
   startWorkflowExecution(workflowId: string): {
     runId: string;
@@ -1383,8 +1383,8 @@ export class TaskOrchestratorService extends BaseService {
    * Advance a workflow run after task completion
    * Returns deltas (newly completed/failed/ready tasks) instead of accumulated state
    * Returns minimal task identifiers (id + status only) for maximum token efficiency
-   * Use get_task() when you need full task details like name/description
-   * Use get_workflow_run_status() when you want the complete current state of the whole workflow
+   * Use `task` action="get" when you need full task details like name/description
+   * Use `workflow_run` action="get_status" when you want the complete current state of the whole workflow
    */
   advanceWorkflowRun(runId: string): {
     newlyCompletedTasks: Array<{ id: string; status: string }>;
@@ -1463,7 +1463,7 @@ export class TaskOrchestratorService extends BaseService {
           cognitiveSuggestions.push({
             type: 'verify_thought',
             thoughtId,
-            reason: `Task '${task.name}' completed in workflow. Consider verifying linked thought '${thoughtId}' to confirm its findings.`
+            reason: `Task '${task.name}' completed in workflow. Consider using \`thought\` action="verify" on linked thought '${thoughtId}' to confirm its findings.`
           });
         }
       }

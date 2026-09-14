@@ -181,7 +181,7 @@ export class CognitiveBridgeService extends BaseService {
       thoughtsPromoted: thoughtsToPromote.length,
       hierarchyPreserved: !flattenHierarchy,
       ...(workflowWasImplicit ? {
-        LLM_instruction: `No workflowId was provided, so a new workflow '${workflowId}' was created. Pass workflowId: '${workflowId}' on subsequent promote_thought_to_tasks/create_tasks calls to keep this work grouped together, instead of omitting it again (which mints yet another new workflow).`
+        LLM_instruction: `No workflowId was provided, so a new workflow '${workflowId}' was created. Pass workflowId: '${workflowId}' on subsequent \`bridge\` action="promote_to_tasks" / \`task\` action="create" calls to keep this work grouped together, instead of omitting it again (which mints yet another new workflow).`
       } : {})
     };
   }

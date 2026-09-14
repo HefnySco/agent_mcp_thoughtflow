@@ -186,8 +186,8 @@ export abstract class BaseService {
 
   /**
    * Mint a fresh implicit strategy when a tool call omits strategyId/workflowId
-   * at a root entry point (create_workflow, create_tree, create_tasks,
-   * promote_thought_to_tasks). Unlike a get-or-create singleton, this always
+   * at a root entry point (workflow action="create", tree action="create", task action="create",
+   * bridge action="promote_to_tasks"). Unlike a get-or-create singleton, this always
    * creates a NEW strategy so unrelated sessions/calls don't silently pile
    * into one shared bucket. The caller is expected to surface the returned
    * id back to the LLM (as `strategyId`/`workflowId` plus an LLM_instruction)

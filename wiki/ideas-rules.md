@@ -29,13 +29,14 @@ Every Idea has:
 
 ### Use Batch Creation Only
 
-**Rule**: Always use `add_ideas` (batch) for creating ideas. Single-item `add_idea` is not available.
+**Rule**: Always use the `thought` tool's `add_ideas` action (batch) for creating ideas. There is no single-item action.
 
 **Why**: Batch creation is more efficient, supports positional references, and provides consistent return values.
 
 **Example**:
 ```json
 {
+  "action": "add_ideas",
   "treeId": "tree-123",
   "ideas": [
     {
@@ -117,7 +118,7 @@ Every Idea has:
 
 ### Multi-Criteria Evaluation
 
-**Rule**: Use `evaluate_thought` to assign scores across multiple dimensions.
+**Rule**: Use the `thought` tool's `evaluate` action to assign scores across multiple dimensions.
 
 **Dimensions**:
 - **score** (0-100): Overall quality
@@ -128,8 +129,9 @@ Every Idea has:
 **Example**:
 ```json
 {
+  "action": "evaluate",
   "treeId": "tree-123",
-  "thoughtId": "idea-1",
+  "id": "idea-1",
   "score": 85,
   "creativity": 70,
   "risk": 30,
@@ -139,7 +141,7 @@ Every Idea has:
 
 ### Verification
 
-**Rule**: Use `verify_thought` to mark a thought as confirmed after validation.
+**Rule**: Use the `thought` tool's `verify` action to mark a thought as confirmed after validation.
 
 **Fields**:
 - **verified**: Boolean flag
@@ -168,7 +170,7 @@ Thought: "Caching strategy" (pending)
 └── Child 3: "Invalidation logic" (in_progress)
 
 // When Child 3 is evaluated with score 85:
-evaluate_thought({ "thoughtId": "idea-3", "score": 85 })
+thought({ "action": "evaluate", "treeId": "tree-123", "id": "idea-3", "score": 85 })
 // → Parent "Caching strategy" automatically becomes evaluated
 // → Parent's score = (80 + 90 + 85) / 3 = 85
 // → If parent has a parent, that grandparent is also checked
@@ -180,13 +182,13 @@ evaluate_thought({ "thoughtId": "idea-3", "score": 85 })
 
 ### Selection
 
-**Rule**: Use `select_thought` to mark a thought as the chosen path for execution.
+**Rule**: Use the `thought` tool's `select` action to mark a thought as the chosen path for execution.
 
 **Effect**: Marks thought state as `selected`, signals this branch should be promoted to tasks.
 
 ### Pruning
 
-**Rule**: Use `prune_tree` to remove thoughts below an evaluation threshold.
+**Rule**: Use the `tree` tool's `prune` action to remove thoughts below an evaluation threshold.
 
 **Parameters**:
 - **threshold**: Thoughts with score below this are pruned
@@ -196,7 +198,7 @@ evaluate_thought({ "thoughtId": "idea-3", "score": 85 })
 
 ### Backtracking
 
-**Rule**: Use `backtrack` to mark a thought and all descendants as pruned.
+**Rule**: Use the `thought` tool's `backtrack` action to mark a thought and all descendants as pruned.
 
 **When**: When a reasoning path proves unproductive.
 
@@ -213,7 +215,7 @@ evaluate_thought({ "thoughtId": "idea-3", "score": 85 })
 
 ### How to Promote
 
-**Tool**: `promote_thought_to_tasks`
+**Tool**: `bridge` tool's `promote_to_tasks` action
 
 **Options**:
 - **includeDescendants**: Promote entire subtree (default: false)
@@ -260,34 +262,34 @@ evaluate_thought({ "thoughtId": "idea-3", "score": 85 })
 ### Exploratory Pattern
 
 ```
-1. create_tree (root problem)
-2. add_ideas (major approaches - batch)
-3. evaluate_thought (score each approach)
-4. add_ideas (dive into best approach - batch with positional refs)
-5. evaluate_thought (score sub-approaches)
-6. select_thought (choose best path)
-7. promote_thought_to_tasks (convert to execution)
+1. tree action="create" (root problem)
+2. thought action="add_ideas" (major approaches - batch)
+3. thought action="evaluate" (score each approach)
+4. thought action="add_ideas" (dive into best approach - batch with positional refs)
+5. thought action="evaluate" (score sub-approaches)
+6. thought action="select" (choose best path)
+7. bridge action="promote_to_tasks" (convert to execution)
 ```
 
 ### Iterative Refinement Pattern
 
 ```
-1. create_tree (initial exploration)
-2. add_ideas + evaluate (explore space)
-3. prune_tree (remove low-quality branches)
-4. add_ideas (refine remaining branches)
-5. verify_thought (validate best options)
-6. promote_thought_to_tasks (execute)
+1. tree action="create" (initial exploration)
+2. thought action="add_ideas" + action="evaluate" (explore space)
+3. tree action="prune" (remove low-quality branches)
+4. thought action="add_ideas" (refine remaining branches)
+5. thought action="verify" (validate best options)
+6. bridge action="promote_to_tasks" (execute)
 ```
 
 ### Debugging Pattern
 
 ```
-1. spawn_tot_from_task (when task blocked)
-2. add_ideas (explore failure modes)
-3. evaluate_thought (identify root cause)
-4. select_thought (choose fix)
-5. promote_thought_to_tasks (implement fix)
+1. bridge action="spawn_tot_from_task" (when task blocked)
+2. thought action="add_ideas" (explore failure modes)
+3. thought action="evaluate" (identify root cause)
+4. thought action="select" (choose fix)
+5. bridge action="promote_to_tasks" (implement fix)
 ```
 
 ## Error Handling
@@ -303,7 +305,7 @@ evaluate_thought({ "thoughtId": "idea-3", "score": 85 })
 - Use fuzzy matching for parent references
 - Check tree depth before adding children
 - Use appropriate deduplication strategy
-- Use `get_tree` to inspect current structure
+- Use the `tree` tool's `get` action to inspect current structure
 
 ## Performance Considerations
 

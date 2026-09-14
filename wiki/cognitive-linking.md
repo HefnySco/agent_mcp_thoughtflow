@@ -50,7 +50,9 @@ The Cognitive Bridge Layer makes the correct workflow the easiest path:
 
 ## Bridge Layer Tools
 
-### 1. promote_thought_to_tasks
+All of these are actions on the single `bridge` MCP tool (`bridge({ "action": "...", ... })`), not separate tools.
+
+### 1. bridge — action="promote_to_tasks"
 
 **Purpose**: Convert a thought (or entire subtree) into executable tasks with full provenance.
 
@@ -82,6 +84,7 @@ The Cognitive Bridge Layer makes the correct workflow the easiest path:
 **Example**:
 ```json
 {
+  "action": "promote_to_tasks",
   "treeId": "tree-123",
   "thoughtId": "idea-5",
   "workflowId": "workflow-456",
@@ -99,7 +102,7 @@ The Cognitive Bridge Layer makes the correct workflow the easiest path:
 - **Thought metadata**: Updated with `promotedToTaskIds`, `promotedAt`, `workflowId`, and provenance entry.
 - **Task metadata**: Includes `sourceThoughtId`, `sourceTreeId`, `promotedAt`, and `syncStatus: 'synced'`.
 
-### 2. spawn_tot_from_task
+### 2. bridge — action="spawn_tot_from_task"
 
 **Purpose**: When a task is blocked, spawn a fresh Tree of Thoughts from it for deeper analysis.
 
@@ -129,6 +132,7 @@ The Cognitive Bridge Layer makes the correct workflow the easiest path:
 **Example**:
 ```json
 {
+  "action": "spawn_tot_from_task",
   "taskId": "task-789",
   "goal": "Investigate cache invalidation failure",
   "rootContent": "Cache is not being invalidated on write operations"
@@ -137,7 +141,7 @@ The Cognitive Bridge Layer makes the correct workflow the easiest path:
 
 **Result**: Creates new ToT tree with provenance linking back to the blocked task, enabling focused reasoning on the specific problem.
 
-### 3. link_thought_to_task
+### 3. bridge — action="link_to_task"
 
 **Purpose**: Create soft bidirectional links between thoughts and tasks for "inspired by" or "related to" relationships.
 
@@ -163,6 +167,7 @@ The Cognitive Bridge Layer makes the correct workflow the easiest path:
 **Example**:
 ```json
 {
+  "action": "link_to_task",
   "treeId": "tree-123",
   "thoughtId": "idea-3",
   "taskId": "task-456",
@@ -172,7 +177,7 @@ The Cognitive Bridge Layer makes the correct workflow the easiest path:
 
 **Result**: Creates soft link without full conversion, useful for tracking inspiration without committing to execution.
 
-### 4. get_cognitive_provenance
+### 4. bridge — action="get_provenance"
 
 **Purpose**: Trace the complete reasoning → execution chain for a task or thought.
 
@@ -196,6 +201,7 @@ The Cognitive Bridge Layer makes the correct workflow the easiest path:
 **Example**:
 ```json
 {
+  "action": "get_provenance",
   "id": "task-789",
   "type": "task",
   "maxDepth": 5
@@ -263,25 +269,25 @@ The system does not automatically sync changes. Agents must:
 
 ### 1. Always Use Bridge Layer
 
-**Rule**: Never manually create tasks from thoughts without using `promote_thought_to_tasks`.
+**Rule**: Never manually create tasks from thoughts without using `bridge` action="promote_to_tasks".
 
 **Why**: Maintains provenance and enables traceability.
 
 ### 2. Link Early, Link Often
 
-**Rule**: Use `link_thought_to_task` whenever a thought inspires a task, even if not directly promoted.
+**Rule**: Use `bridge` action="link_to_task" whenever a thought inspires a task, even if not directly promoted.
 
 **Why**: Captures inspiration and maintains context.
 
 ### 3. Spawn When Blocked
 
-**Rule**: Use `spawn_tot_from_task` when execution fails or requires deeper reasoning.
+**Rule**: Use `bridge` action="spawn_tot_from_task" when execution fails or requires deeper reasoning.
 
 **Why**: Enables focused problem-solving while maintaining provenance.
 
 ### 4. Trace Provenance Before Changes
 
-**Rule**: Use `get_cognitive_provenance` before modifying tasks or thoughts.
+**Rule**: Use `bridge` action="get_provenance" before modifying tasks or thoughts.
 
 **Why**: Understands context and avoids breaking provenance chains.
 
@@ -302,43 +308,43 @@ The system does not automatically sync changes. Agents must:
 ### Standard Exploration → Execution Pattern
 
 ```
-1. create_tree (explore problem space)
-2. add_ideas (generate approaches)
-3. evaluate_thought (score approaches)
-4. select_thought (choose best approach)
-5. promote_thought_to_tasks (convert to execution)
-6. start_workflow_execution (execute tasks)
+1. tree action="create" (explore problem space)
+2. thought action="add_ideas" (generate approaches)
+3. thought action="evaluate" (score approaches)
+4. thought action="select" (choose best approach)
+5. bridge action="promote_to_tasks" (convert to execution)
+6. workflow_run action="start" (execute tasks)
 ```
 
 ### Debugging Pattern
 
 ```
-1. get_cognitive_provenance (understand context)
-2. spawn_tot_from_task (reason about failure)
-3. add_ideas (explore failure modes)
-4. evaluate_thought (identify root cause)
-5. select_thought (choose fix)
-6. promote_thought_to_tasks (implement fix)
-7. advance_workflow_run (retry execution)
+1. bridge action="get_provenance" (understand context)
+2. bridge action="spawn_tot_from_task" (reason about failure)
+3. thought action="add_ideas" (explore failure modes)
+4. thought action="evaluate" (identify root cause)
+5. thought action="select" (choose fix)
+6. bridge action="promote_to_tasks" (implement fix)
+7. workflow_run action="advance" (retry execution)
 ```
 
 ### Iterative Refinement Pattern
 
 ```
-1. promote_thought_to_tasks (initial execution plan)
+1. bridge action="promote_to_tasks" (initial execution plan)
 2. execute tasks (partial execution)
-3. spawn_tot_from_task (reason about blockers)
-4. link_thought_to_task (track inspiration)
-5. promote_thought_to_tasks (add new tasks)
+3. bridge action="spawn_tot_from_task" (reason about blockers)
+4. bridge action="link_to_task" (track inspiration)
+5. bridge action="promote_to_tasks" (add new tasks)
 6. continue execution
 ```
 
 ### Cross-Strategy Inspiration Pattern
 
 ```
-1. create_tree (explore in Strategy A)
-2. link_thought_to_task (inspire task in Strategy B)
-3. get_cognitive_provenance (trace cross-strategy link)
+1. tree action="create" (explore in Strategy A)
+2. bridge action="link_to_task" (inspire task in Strategy B)
+3. bridge action="get_provenance" (trace cross-strategy link)
 4. Use insight to improve Strategy B
 ```
 
@@ -353,9 +359,9 @@ The system does not automatically sync changes. Agents must:
 
 ### Resolution
 
-- Use `get_tree` to verify thought exists before promoting
-- Use `get_task` to verify task exists before linking/spawning
-- Use `get_workflow` to verify workflow exists before promoting
+- Use `tree` action="get" to verify thought exists before promoting
+- Use `task` action="get" to verify task exists before linking/spawning
+- Use `workflow` action="get" to verify workflow exists before promoting
 - Check cognitive metadata before operations
 
 ## Performance Considerations

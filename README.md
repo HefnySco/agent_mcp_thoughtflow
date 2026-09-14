@@ -43,10 +43,12 @@ Many agents follow this broken pattern:
 
 ### Cognitive Bridge Layer (The Killer Feature)
 
-- `promote_thought_to_tasks` — Convert a thought (or entire subtree) into executable tasks with full provenance metadata
+All of these are actions on the single consolidated `bridge` tool (e.g. `bridge` with `action: "promote_to_tasks"`):
+
+- `promote_to_tasks` — Convert a thought (or entire subtree) into executable tasks with full provenance metadata
 - `spawn_tot_from_task` — When a task is blocked, spawn a fresh Tree of Thoughts from it for deeper analysis
-- `link_thought_to_task` — Create soft bidirectional links between thoughts and tasks for "inspired by" or "related to" relationships
-- `get_cognitive_provenance` — Trace the complete reasoning → execution chain
+- `link_to_task` — Create soft bidirectional links between thoughts and tasks for "inspired by" or "related to" relationships
+- `get_provenance` — Trace the complete reasoning → execution chain
 
 All bridge operations automatically maintain `metadata.cognitive` and create auditable `cognitiveLinks`.
 
@@ -55,8 +57,8 @@ All bridge operations automatically maintain `metadata.cognitive` and create aud
 - Rich task model with hard/soft dependencies
 - Hierarchical tasks (`parentTaskId` + `order`)
 - Workflow creation and execution engine with automatic dependency resolution
-- `startWorkflowExecution` + `advanceWorkflowRun` for controlled execution
-- `getReadyTasks` for just-in-time task dispatching
+- The `workflow_run` tool's `start` + `advance` actions for controlled execution
+- `start` (and `advance`) return `readyTasks` for just-in-time task dispatching
 - **First-class verification fields** — `verified`, `verifiedAt`, `verificationNotes`, `verificationMethod` for tracking verification status
 
 ### Tree of Thoughts
@@ -72,15 +74,11 @@ All bridge operations automatically maintain `metadata.cognitive` and create aud
 - **Strategy** groups related Trees of Thoughts and Workflows into cohesive units
 - Each Strategy can own multiple `treeIds` and `workflowIds`
 - Enables organizing complex projects by linking reasoning and execution
-- Tools: `add_tree_to_strategy`, `add_workflow_to_strategy`, `remove_tree_from_strategy`, `remove_workflow_from_strategy`
+- Managed via the `strategy` tool's `add_tree` / `add_workflow` / `remove_tree` / `remove_workflow` actions
 
 ### Visualization & Introspection
 
-- ASCII tree visualization (`visualize_tree_ascii`)
-- Tree visualization with cognitive links (`visualize_tree_with_links`)
-- SVG workflow diagrams with dependency layout
-- SVG task and strategy visualizations
-- `get_cognitive_stats` for high-level metrics
+`VisualizationService` provides ASCII/SVG rendering and cognitive stats (tree ASCII, tree-with-links, workflow SVG, strategy SVG, cognitive stats). These are not exposed as MCP tools — they back the Web UI Dashboard below; use them programmatically if embedding the server.
 
 ### Architecture & Extensibility
 
@@ -120,15 +118,17 @@ The server uses JSON file storage by default (`./thoughtflow-state.json`).
 
 ```json
 // 1. Create a reasoning tree
-create_tree({
+tree({
+  "action": "create",
   "goal": "Design a robust caching strategy for our API",
   "rootContent": "Start with a simple in-memory cache"
 })
 
-// 2. Explore and evaluate thoughts...
+// 2. Explore and evaluate thoughts (thought action="compare_options" or "add_ideas", then "evaluate", then "select")...
 
 // 3. Promote the best approach to tasks
-promote_thought_to_tasks({
+bridge({
+  "action": "promote_to_tasks",
   "treeId": "...",
   "thoughtId": "...",
   "includeDescendants": true,
@@ -136,10 +136,11 @@ promote_thought_to_tasks({
 })
 
 // 4. Start executing the workflow
-start_workflow_execution({ "workflowId": "..." })
+workflow_run({ "action": "start", "workflowId": "..." })
 
 // 5. If a task gets blocked, spawn new reasoning
-spawn_tot_from_task({
+bridge({
+  "action": "spawn_tot_from_task",
   "taskId": "...",
   "goal": "Investigate why the cache invalidation is failing",
   "rootContent": "The cache is not being invalidated on write operations"
@@ -148,10 +149,11 @@ spawn_tot_from_task({
 
 ### 3. Quick Plan (One-Call Setup)
 
-For new projects, use `quick_plan` to create strategy + workflow + tasks + root thought in a single call:
+For new projects, use the `bridge` tool's `quick_plan` action to create strategy + workflow + tasks + root thought in a single call:
 
 ```json
-quick_plan({
+bridge({
+  "action": "quick_plan",
   "goal": "Implement user authentication system",
   "tasks": [
     { "name": "Design auth schema", "description": "Define user, session, and token tables" },
@@ -233,87 +235,102 @@ The dashboard server provides the following API endpoints:
 
 ## Tool Reference
 
-### Bridge Layer Tools
+The server exposes **8 consolidated MCP tools**, each taking an `action` parameter that selects the operation — there is no per-operation tool (no `create_task`, `get_tree`, etc. as separate tools). This keeps the tool list small while still exposing every operation.
 
-| Tool | Purpose |
+| Tool | Actions |
 |------|---------|
-| `promote_thought_to_tasks` | Convert reasoning into tracked executable work |
+| `task` | `create` (batch), `get`, `list`, `update`, `delete`, `move`, `get_subtasks` |
+| `workflow` | `create`, `get`, `list`, `delete`, `add_task`, `remove_task` |
+| `workflow_run` | `start`, `advance`, `get`, `get_status`, `list`, `delete` |
+| `strategy` | `create`, `get`, `list`, `delete`, `add_tree`, `remove_tree`, `add_workflow`, `remove_workflow`, `deduplicate` |
+| `tree` | `create`, `get`, `list`, `delete`, `prune`, `clear_all`, `deduplicate` |
+| `thought` | `compare_options`, `add_ideas`, `get`, `evaluate`, `verify`, `select`, `backtrack`, `delete`, `generate_children`, `batch_evaluate` |
+| `bridge` | `promote_to_tasks`, `spawn_tot_from_task`, `link_to_task`, `get_provenance`, `dedup_strategies_and_trees`, `complete_task_and_thought`, `quick_plan`, `sync_workflow_thoughts` |
+| `admin` | `clear_all`, `purge_deleted`, `restore_deleted`, `reload_state`, `clear_state` |
+
+### Bridge Layer Tool (`bridge`)
+
+| Action | Purpose |
+|--------|---------|
+| `promote_to_tasks` | Convert reasoning into tracked executable work |
 | `spawn_tot_from_task` | Spawn fresh reasoning from a blocked task |
-| `link_thought_to_task` | Create soft bidirectional links for "inspired by" or "related to" relationships |
-| `get_cognitive_provenance` | Trace full reasoning → execution history |
+| `link_to_task` | Create soft bidirectional links for "inspired by" or "related to" relationships |
+| `get_provenance` | Trace full reasoning → execution history |
 | `complete_task_and_thought` | Atomically mark task completed and evaluate/verify linked thoughts |
 | `quick_plan` | Single call to create strategy + workflow + tasks + root thought |
 | `sync_workflow_thoughts` | Scan completed tasks and evaluate pending linked thoughts |
+| `dedup_strategies_and_trees` | Cleanup: remove duplicate strategies and trees |
 
-**Note**: `promote_thought_to_tasks` supports `skipEvaluationGate: true` for simple workflows that don't need the evaluate+select cycle. The system uses debounce mechanisms to prevent race conditions during heavy LLM usage.
+**Note**: `bridge` action="promote_to_tasks" supports `skipEvaluationGate: true` for simple workflows that don't need the evaluate+select cycle. The system uses debounce mechanisms to prevent race conditions during heavy LLM usage.
 
-### Task Orchestrator Tools
+### Task Orchestrator Tools (`task`, `workflow`, `workflow_run`, `strategy`)
 
-| Category | Tools |
+| Category | Tool + actions |
 |----------|-------|
-| Tasks | `create_tasks` (batch), `get_task`, `list_tasks`, `update_task`, `delete_task` |
-| Workflows | `create_workflow`, `get_workflow`, `list_workflows`, `addTasksToWorkflow` |
-| Execution | `start_workflow_execution`, `advance_workflow_run`, `getReadyTasks` |
-| Hierarchy | `get_subtasks`, `move_task` |
-| Strategies | `create_strategy`, `get_strategy`, `list_strategies`, `add_tree_to_strategy`, `remove_tree_from_strategy` |
-| Soft-Delete | `purge_deleted`, `restore_deleted` |
+| Tasks | `task` — `create` (batch), `get`, `list`, `update`, `delete` |
+| Workflows | `workflow` — `create`, `get`, `list`, `add_task`, `remove_task` |
+| Execution | `workflow_run` — `start`, `advance`, `get_status` |
+| Hierarchy | `task` — `get_subtasks`, `move` |
+| Strategies | `strategy` — `create`, `get`, `list`, `add_tree`, `remove_tree` |
+| Soft-Delete | `admin` — `purge_deleted`, `restore_deleted` |
 
-**Note**: Single-item task creation (`create_task`) is not available. Use `create_tasks` (batch) for all task creation. It supports positional references (task-1, task-2) for dependencies and parent-child relationships within the batch, and returns an `idMap` for mapping positional refs to real IDs.
+**Note**: Single-item task creation is not available — `task` action="create" always takes a `tasks` array (batch), even for one task. It supports positional references (task-1, task-2) for dependencies and parent-child relationships within the batch, and returns an `idMap` for mapping positional refs to real IDs.
 
-### Tree of Thoughts Tools
+### Tree of Thoughts Tools (`tree`, `thought`, `strategy`)
 
-| Category | Tools |
+| Category | Tool + actions |
 |----------|-------|
-| Trees | `create_tree`, `get_tree`, `list_trees`, `delete_tree` |
-| Thoughts | `add_ideas` (batch), `get_thought`, `evaluate_thought`, `verify_thought`, `select_thought`, `backtrack`, `prune_tree` |
-| Strategies | `create_strategy`, `get_strategy`, `list_strategies`, `add_workflow_to_strategy`, `remove_workflow_from_strategy` |
+| Trees | `tree` — `create`, `get`, `list`, `delete`, `prune` |
+| Thoughts | `thought` — `compare_options` / `add_ideas` (batch), `get`, `evaluate`, `verify`, `select`, `backtrack` |
+| Strategies | `strategy` — `create`, `get`, `list`, `add_workflow`, `remove_workflow` |
 
-**Note**: Single-item idea creation (`add_idea`) is not available. Use `add_ideas` (batch) for all idea creation. It supports positional references (idea-1, idea-2) for parentId within the batch, uses fuzzy matching for robustness, and returns an `idMap` for mapping positional refs to real IDs.
+**Note**: Single-item idea creation is not available — `thought` action="add_ideas" always takes an `ideas` array (batch), and action="compare_options" always takes an `options` array. Both support positional references (e.g. idea-1, idea-2) for `parentId` within the batch, use fuzzy matching for robustness, and return an `idMap` for mapping positional refs to real IDs.
 
 ### Soft-Delete & Recovery
 
-All delete operations use **soft-delete** by default — entities are marked as deleted but preserved for recovery.
+All delete operations use **soft-delete** by default — entities are marked as deleted but preserved for recovery. Purge/restore live on the separate `admin` tool, not on the entity's own tool.
 
-- **`includeDeleted` parameter**: All `get_*` and `list_*` tools support an optional `includeDeleted: true` parameter to view soft-deleted items.
-- **`restore_deleted`**: Restore a soft-deleted entity back to active state. Requires `entityType` ('task', 'workflow', 'tree', 'strategy', 'link') and `id`.
-- **`purge_deleted`**: Permanently remove soft-deleted items (cannot be undone). Supports filtering by `entityType` and `olderThanDays` for safe cleanup.
+- **`includeDeleted` parameter**: `task`/`workflow`/`tree`/`strategy` `get`/`list` actions support an optional `includeDeleted: true` parameter to view soft-deleted items.
+- **`admin` action="restore_deleted"**: Restore a soft-deleted entity back to active state. Requires `entityType` ('task', 'workflow', 'tree', 'strategy', 'link') and `id`.
+- **`admin` action="purge_deleted"**: Permanently remove soft-deleted items (cannot be undone). Supports filtering by `entityType` and `olderThanDays` for safe cleanup.
 
 Example workflow:
 ```json
 // 1. Delete a task
-delete_task({ "id": "task-123" })
+task({ "action": "delete", "id": "task-123" })
 
 // 2. List active tasks (deleted task hidden)
-list_tasks() // → task-123 not visible
+task({ "action": "list" }) // → task-123 not visible
 
 // 3. List with deleted included
-list_tasks({ "includeDeleted": true }) // → task-123 visible with isDeleted flag
+task({ "action": "list", "includeDeleted": true }) // → task-123 visible with isDeleted flag
 
 // 4. Restore if needed
-restore_deleted({ "entityType": "task", "id": "task-123" })
+admin({ "action": "restore_deleted", "entityType": "task", "id": "task-123" })
 
 // 5. Permanently purge old deleted items (e.g., older than 30 days)
-purge_deleted({ "entityType": "task", "olderThanDays": 30 })
+admin({ "action": "purge_deleted", "entityType": "task", "olderThanDays": 30 })
 ```
 
 ### State Size & Deduplication
 
-Cognitive links can accumulate over time. The system includes built-in deduplication tools to manage state size:
+Cognitive links can accumulate over time. The system includes built-in deduplication actions to manage state size:
 
-- **`deduplicate_strategies_and_trees`** — Removes duplicate strategies and trees by normalized name/goal
-- **`deduplicate_strategies`** — Removes duplicate strategies only
-- **`deduplicate_trees`** — Removes duplicate trees only
+- **`bridge` action="dedup_strategies_and_trees"** — Removes duplicate strategies and trees by normalized name/goal
+- **`strategy` action="deduplicate"** — Removes duplicate strategies only
+- **`tree` action="deduplicate"** — Removes duplicate trees only
 
 For production workloads with heavy cognitive link usage, monitor state file size and run deduplication periodically.
 
-### Visualization Tools
+### Visualization (not MCP tools)
 
-- `visualize_tree_ascii`
-- `visualize_tree_with_links`
-- `visualize_workflow_svg`
-- `visualize_task_svg`
-- `visualize_strategy_svg`
-- `get_cognitive_stats`
+`VisualizationService` provides these as programmatic methods, used by the Web UI Dashboard — they are not callable as MCP tools:
+
+- `visualizeTreeAscii`
+- `visualizeTreeWithLinks`
+- `visualizeWorkflowSvg`
+- `visualizeStrategySvg`
+- `getCognitiveStats`
 
 ---
 
@@ -321,11 +338,11 @@ For production workloads with heavy cognitive link usage, monitor state file siz
 
 The intended usage pattern for LLM agents:
 
-1. **Explore** — Use `create_tree` + `add_idea` + `evaluate_thought` to explore solution space
-2. **Commit** — Use `promote_thought_to_tasks` on the most promising branch
-3. **Execute** — Use `start_workflow_execution` + `advance_workflow_run` (or `getReadyTasks`)
-4. **Reflect** — If blocked, use `spawn_tot_from_task` on the stuck task
-5. **Audit** — Use `get_cognitive_provenance` when traceability is required
+1. **Explore** — Use `tree` action="create" + `thought` action="add_ideas"/"compare_options" + action="evaluate" to explore solution space
+2. **Commit** — Use `bridge` action="promote_to_tasks" on the most promising branch
+3. **Execute** — Use `workflow_run` action="start" + action="advance" (response includes `readyTasks`)
+4. **Reflect** — If blocked, use `bridge` action="spawn_tot_from_task" on the stuck task
+5. **Audit** — Use `bridge` action="get_provenance" when traceability is required
 
 This pattern turns ad-hoc reasoning into auditable, resumable, delegable work.
 
@@ -375,9 +392,9 @@ Idea (Thought) ↔ Task (Soft Bidirectional Links)
 
 All creation flows must follow the hierarchy:
 
-1. **`create_strategy`** — Create or get strategy (idempotent by normalized name)
-2. **`create_workflow(strategyId)`** — Create workflow with mandatory `strategyId`
-3. **`create_task(workflowId)`** — Create task with mandatory `workflowId` (automatically inherits `strategyId`)
+1. **`strategy` action="create"** — Create or get strategy (idempotent by normalized name)
+2. **`workflow` action="create"** with `strategyId` — Create workflow with mandatory `strategyId`
+3. **`task` action="create"** with `workflowId` — Create task(s) with mandatory `workflowId` (automatically inherits `strategyId`)
 
 The system enforces these invariants at every operation to prevent data inconsistency.
 

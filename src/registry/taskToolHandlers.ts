@@ -10,7 +10,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'task',
     tool: {
       name: 'task',
-      description: 'Manage tasks: create (batch), get, list, update, delete, move, or get_subtasks - pick one via `action`. Flexible input: `id` accepts aliases (taskId, parentTaskId) and a bare number N is treated as "task-N". BATCH creation is the only way to create tasks (action="create" with a `tasks` array) - supports positional references (task-1, task-2) for dependencies/parentTaskId within the batch and name-based resolution for existing tasks. Returns { tasks: [{id, name, status}], idMap } on create so you can map positional refs to real IDs. IMPORTANT: use this tool for a known, linear sequence of work. If you have 2+ candidate approaches that need to be compared/scored before picking one, do NOT model them as parallel/alternative tasks here - use the `tree`/`thought` tools to generate and evaluate the candidates first, then use `bridge` action="promote_to_tasks" to convert only the winning approach into tasks.',
+      description: 'Manage tasks: create (batch), get, list, update, delete, move, or get_subtasks - pick one via `action`. Flexible input: `id` accepts aliases (taskId, parentTaskId) and a bare number N is treated as "task-N". BATCH creation is the only way to create tasks (action="create" with a `tasks` array) - supports positional references (task-1, task-2) for dependencies/parentTaskId within the batch and name-based resolution for existing tasks. Returns { tasks: [{id, name, status}], idMap } on create so you can map positional refs to real IDs. IMPORTANT: use this tool for a known, linear sequence of work. If you have 2+ candidate approaches that need to be compared/scored before picking one, do NOT model them as parallel/alternative tasks here - use the `tree`/`thought` tools to generate and evaluate the candidates first, then use `bridge` action="promote_to_tasks" to convert only the winning approach into tasks. EFFICIENCY: skip task tracking entirely for trivial single-step requests. When you do track work, keep tasks coarse (a handful of meaty tasks, not micro-tasks - each status flip is a call) and create them standalone (omit `workflowId`) unless the work has real ordering/dependency constraints that need `workflow_run` to sequence. Do not poll action="list"/"get" mid-work to check progress - verify once at the end.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -81,7 +81,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'workflow',
     tool: {
       name: 'workflow',
-      description: 'Manage workflows: create, get, list, delete, add_task, or remove_task - pick one via `action`. Remember to use the workflow_run tool (action="start") to begin processing after creating a workflow.',
+      description: 'Manage workflows: create, get, list, delete, add_task, or remove_task - pick one via `action`. Remember to use the workflow_run tool (action="start") to begin processing after creating a workflow. EFFICIENCY: only create a workflow when its tasks have real ordering/dependency constraints that need sequencing via `workflow_run`. For independent tasks with no real dependencies, skip workflow/workflow_run entirely - create them standalone via `task` action="create" (omit `workflowId`) and track completion with `task` action="update".',
       inputSchema: {
         type: 'object',
         properties: {
@@ -127,7 +127,7 @@ export const taskToolDefinitions: { name: string; tool: Tool; handler: ToolHandl
     name: 'workflow_run',
     tool: {
       name: 'workflow_run',
-      description: 'Manage workflow execution: start, advance, get, get_status, list, or delete - pick one via `action`. start returns runId, workflowStatus, readyTasks (minimal: id + status only), totalTasks, and readyCount - you must manually execute ready tasks, mark them completed via the task tool, then call action="advance" to progress. advance returns only deltas (newlyCompletedTasks/newlyFailedTasks/newlyReadyTasks, minimal id+status) - token-efficient, does not re-list prior tasks. Use action="get_status" for the full picture of all tasks in a run.',
+      description: 'Manage workflow execution: start, advance, get, get_status, list, or delete - pick one via `action`. start returns runId, workflowStatus, readyTasks (minimal: id + status only), totalTasks, and readyCount - you must manually execute ready tasks, mark them completed via the task tool, then call action="advance" to progress. advance returns only deltas (newlyCompletedTasks/newlyFailedTasks/newlyReadyTasks, minimal id+status) - token-efficient, does not re-list prior tasks. Use action="get_status" for the full picture of all tasks in a run. EFFICIENCY: do not poll action="get_status" or action="list" repeatedly mid-execution to check progress - advance already returns everything that changed each time; call get_status at most once, for a final audit after the run completes.',
       inputSchema: {
         type: 'object',
         properties: {
