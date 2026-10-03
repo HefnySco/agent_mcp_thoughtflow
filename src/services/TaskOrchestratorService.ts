@@ -528,7 +528,7 @@ export class TaskOrchestratorService extends BaseService {
     }
 
     // Return minimal summary
-    return { id, name: task.name, status: task.status } as Task;
+    return { id, status: task.status } as Task;
   }
 
   /**
@@ -776,7 +776,7 @@ export class TaskOrchestratorService extends BaseService {
     // Check if task already in workflow
     if (workflow.taskIds.includes(taskId)) {
       logger.info(`Task ${taskId} already in workflow ${workflowId}`);
-      return { id: workflowId, name: workflow.name, status: workflow.status } as Workflow;
+      return { id: workflowId, status: workflow.status } as Workflow;
     }
     
     // Insert at specified position
@@ -799,7 +799,7 @@ export class TaskOrchestratorService extends BaseService {
     logger.info(`Added task ${taskId} to workflow ${workflowId} at position ${position}`);
     
     // Return minimal summary
-    return { id: workflowId, name: workflow.name, status: workflow.status } as Workflow;
+    return { id: workflowId, status: workflow.status } as Workflow;
   }
 
   /**
@@ -818,7 +818,7 @@ export class TaskOrchestratorService extends BaseService {
     
     if (index === -1) {
       logger.info(`Task ${taskId} not found in workflow ${workflowId}`);
-      return { id: workflowId, name: workflow.name, status: workflow.status } as Workflow;
+      return { id: workflowId, status: workflow.status } as Workflow;
     }
     
     workflow.taskIds.splice(index, 1);
@@ -828,7 +828,7 @@ export class TaskOrchestratorService extends BaseService {
     logger.info(`Removed task ${taskId} from workflow ${workflowId}`);
     
     // Return minimal summary
-    return { id: workflowId, name: workflow.name, status: workflow.status } as Workflow;
+    return { id: workflowId, status: workflow.status } as Workflow;
   }
 
   /**
@@ -1015,7 +1015,7 @@ export class TaskOrchestratorService extends BaseService {
     }
 
     // Return minimal summary with LLM_instruction
-    return this.enrichStrategyWithLLMInstruction({ id: strategyId, name: strategy.name, status: strategy.status } as Strategy);
+    return this.enrichStrategyWithLLMInstruction({ id: strategyId, status: strategy.status } as Strategy);
   }
 
   /**
@@ -1045,7 +1045,7 @@ export class TaskOrchestratorService extends BaseService {
     }
 
     // Return minimal summary with LLM_instruction
-    return this.enrichStrategyWithLLMInstruction({ id: strategyId, name: strategy.name, status: strategy.status } as Strategy);
+    return this.enrichStrategyWithLLMInstruction({ id: strategyId, status: strategy.status } as Strategy);
   }
 
   /**
@@ -1091,7 +1091,7 @@ export class TaskOrchestratorService extends BaseService {
     }
 
     // Return minimal summary with LLM_instruction
-    return this.enrichStrategyWithLLMInstruction({ id: strategyId, name: strategy.name, status: strategy.status } as Strategy);
+    return this.enrichStrategyWithLLMInstruction({ id: strategyId, status: strategy.status } as Strategy);
   }
 
   /**
@@ -1130,7 +1130,7 @@ export class TaskOrchestratorService extends BaseService {
     }
 
     // Return minimal summary with LLM_instruction
-    return this.enrichStrategyWithLLMInstruction({ id: strategyId, name: strategy.name, status: strategy.status } as Strategy);
+    return this.enrichStrategyWithLLMInstruction({ id: strategyId, status: strategy.status } as Strategy);
   }
 
   /**
@@ -1880,6 +1880,6 @@ export class TaskOrchestratorService extends BaseService {
     logger.info(`Moved task: ${taskId} (cognitive metadata preserved)`);
     
     // Return minimal summary
-    return { id: taskId, name: updatedTask.name, status: updatedTask.status } as Task;
+    return { id: taskId, status: updatedTask.status } as Task;
   }
 }
