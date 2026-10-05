@@ -20,7 +20,7 @@ export const totToolDefinitions: { name: string; tool: Tool; handler: ToolHandle
           rootContent: { type: 'string', description: 'The content of the root thought, for create' },
           maxDepth: { type: 'number', description: 'Maximum depth of the tree (default: 10), for create' },
           sessionId: { type: 'string', description: 'Optional session ID for context maintenance, for create' },
-          strategyId: { type: 'string', description: 'Strategy ID, for create. Optional - if omitted, the tree is created under a new implicit strategy.' },
+          strategyId: { type: 'string', description: 'Strategy ID, for create. Optional - if omitted, the tree is created under the shared project strategy.' },
           metadata: { type: 'object', description: 'Additional metadata, for create' },
           includeDeleted: { type: 'boolean', description: 'Include soft-deleted trees, for get/list' },
           detail: { type: 'string', enum: ['summary', 'full'], description: 'For action="get": "summary" (default) returns each thought as {id, content, parentId, children, state, evaluation, depth} - enough to reference and navigate. "full" additionally includes timestamps, verification fields, and metadata (e.g. evaluationReasoning) for every thought - only ask for this when you actually need that detail, it is much larger.' },

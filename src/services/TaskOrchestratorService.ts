@@ -1,5 +1,6 @@
 import type {
   Task,
+  TaskPriority,
   Workflow,
   Strategy
 } from '../types/index.js';
@@ -13,24 +14,23 @@ import {
 import { BaseService } from './BaseService.js';
 import { logger } from '../utils/logger.js';
 import { validateRequiredString, validateId } from '../utils/validators.js';
+import { refreshWorkflowStatus, refreshStrategyStatus, runMaintenance } from '../utils/stateMaintenance.js';
+import type { MaintenanceReport } from '../utils/stateMaintenance.js';
+import { isFullProfile } from '../utils/profile.js';
 
 /**
  * LLM instruction for Strategy usage
  * Provides guidance to the LLM on how to use Strategies correctly
  */
-const STRATEGY_LLM_INSTRUCTION = `Strategy Usage Rules:
-- One Strategy = one cohesive goal/project area.
+const STRATEGY_LLM_INSTRUCTION = isFullProfile() ? `Strategy Usage Rules:
+- One Strategy = one cohesive goal/project area. Omitting strategyId uses the shared project strategy.
 - Use \`strategy\` action="create" as get-or-create (idempotent by normalized name).
-- Add Trees for divergent reasoning/exploration. Create or use an existing Tree before adding ideas.
-- Add Workflows for convergent execution with tasks. Create or use an existing workflow before creating tasks.
-- CRITICAL: When creating MULTIPLE related tasks or ideas, ALWAYS use batch actions:
-  * Use \`task\` action="create" with a \`tasks\` array - supports positional refs (task-1, task-2) for dependencies/parentTaskId
-  * Use \`thought\` action="add_ideas" (or "compare_options") with an \`ideas\`/\`options\` array - supports positional refs (idea-1, idea-2) for parentId
-  * There is no single-item create action for either - always pass an array, even for one item.
-  * Batch actions return an idMap mapping positional refs to real IDs for later reference.
-- Promote promising thoughts to tasks via \`bridge\` action="promote_to_tasks". If a task blocks, spawn a new Tree from it via \`bridge\` action="spawn_tot_from_task".
-- Maintain strict isolation: do not mix tasks or workflows across different Strategies.
-- Use the \`bridge\` tool for provenance (action="link_to_task"/"promote_to_tasks"/"spawn_tot_from_task"/"get_provenance").`;
+- Add Trees for divergent reasoning/exploration, Workflows for convergent execution with tasks.
+- Batch: \`task\` action="create" takes a \`tasks\` array (positional refs task-1, task-2 for dependencies/parentTaskId); \`thought\` action="add_ideas" takes \`ideas\`. Always pass arrays, even for one item.
+- Use a Tree only when 2+ approaches must be compared, or a task has failed twice; promote the winner via \`bridge\` action="promote_to_tasks", and spawn a Tree from a stuck task via \`bridge\` action="spawn_tot_from_task".` : `Strategy Usage Rules:
+- One Strategy = one cohesive goal/project area. Omitting strategyId uses the shared project strategy.
+- Use \`strategy\` action="create" as get-or-create (idempotent by normalized name).
+- Batch: \`task\` action="create" takes a \`tasks\` array (positional refs task-1, task-2 for dependencies/parentTaskId). Always pass an array, even for one item.`;
 
 /**
  * TaskOrchestratorService manages task execution with dependency tracking
@@ -160,13 +160,16 @@ export class TaskOrchestratorService extends BaseService {
       parentTaskId?: string;
       order?: number;
       status?: Task['status'];
+      priority?: TaskPriority;
+      tags?: string[];
       metadata?: Record<string, any>;
     }>;
     workflowId?: string;
+    workflowName?: string;
     strategyId?: string;
     deduplication?: 'skip' | 'error' | 'overwrite';
   }): {
-    tasks: Array<{ id: string; name: string; status: string }>;
+    tasks: Array<{ id: string; status: string }>;
     idMap: Record<string, string>;
     workflowId?: string;
     strategyId?: string;
@@ -180,46 +183,33 @@ export class TaskOrchestratorService extends BaseService {
     let workflow: Workflow | undefined;
     let workflowCreated = false;
     let message: string | undefined;
-
-    // Handle workflowId scenarios
     let effectiveStrategyId: string | undefined;
 
     if (params.workflowId) {
-      // workflowId is provided - check if it exists
-      workflow = this.state.workflows.get(params.workflowId);
+      // Match by id, slugged id, or name - so "wf_foo" and "wf-foo" are the SAME workflow
+      workflow = this.resolveWorkflowRef(params.workflowId);
       if (!workflow) {
-        // Workflow doesn't exist - auto-create it, minting a fresh implicit
-        // strategy when none was given, instead of erroring back to the caller
-        const strategyIdForNewWorkflow = params.strategyId || this.createImplicitStrategy(params.workflowId).id;
-        const createdWorkflow = this.createWorkflow({
-          name: params.workflowId,
-          description: `Auto-created workflow for tasks`,
-          taskIds: [],
-          strategyId: strategyIdForNewWorkflow
-        });
-        // Get the full workflow object from state (createWorkflow returns minimal summary)
-        workflow = this.state.workflows.get(createdWorkflow.id);
+        workflow = this.autoCreateWorkflow(params.workflowId, params.strategyId);
         workflowCreated = true;
-        message = `Workflow '${params.workflowId}' did not exist and was automatically created under strategy '${strategyIdForNewWorkflow}'. The ${params.tasks.length} new tasks have been added to it.${!params.strategyId ? ` Reuse strategyId: '${strategyIdForNewWorkflow}' on later calls to keep related work grouped together.` : ''} You can later use \`task\` action="move" to move any of these tasks to a different workflow, or rename the workflow if the name is not ideal.`;
-        effectiveStrategyId = strategyIdForNewWorkflow;
-      } else {
-        effectiveStrategyId = workflow.strategyId;
+        message = `Created workflow '${workflow.id}'.`;
       }
+      effectiveStrategyId = workflow.strategyId;
+    } else if (params.tasks.length > 1 || params.tasks.some(t => t.dependencies?.length || t.parentTaskId)) {
+      // No workflowId, but a multi-task plan: group it so status roll-up works
+      // and tasks don't end up orphaned.
+      const wfName = params.workflowName || params.tasks[0].name;
+      workflow = this.autoCreateWorkflow(wfName, params.strategyId);
+      workflowCreated = true;
+      effectiveStrategyId = workflow.strategyId;
+      message = `Grouped into workflow '${workflow.id}'. Pass workflowId to add more.`;
     } else {
-      // workflowId omitted - tasks will be standalone
-      // If strategyId is provided, use it; otherwise mint a fresh implicit strategy
-      effectiveStrategyId = params.strategyId;
-      if (!effectiveStrategyId) {
-        effectiveStrategyId = this.createImplicitStrategy(params.tasks[0]?.name).id;
-        message = `No strategyId was provided, so tasks were created standalone under a new strategy '${effectiveStrategyId}'. Reuse strategyId: '${effectiveStrategyId}' on later calls to keep related work grouped together. You can also add these tasks to a workflow using \`workflow\` action="add_task".`;
-      } else {
-        message = `Tasks created as standalone. Associated with strategy '${effectiveStrategyId}'. You can later add them to a workflow using \`workflow\` action="add_task".`;
-      }
+      effectiveStrategyId = params.strategyId || this.createImplicitStrategy().id;
     }
+    const wfId = workflow?.id;
 
     const deduplication = params.deduplication || 'skip';
     const idMap: Record<string, string> = {};
-    const resultTasks: Array<{ id: string; name: string; status: string }> = [];
+    const resultTasks: Array<{ id: string; status: string }> = [];
     const existingIds = new Set(this.state.tasks.keys());
 
     // First pass: create/update all tasks and build idMap
@@ -233,9 +223,9 @@ export class TaskOrchestratorService extends BaseService {
       const normalizedName = this.normalizeKey(taskDef.name);
       let existingTaskId: string | null = null;
       
-      if (params.workflowId) {
+      if (wfId && !workflowCreated) {
         for (const [id, task] of this.state.tasks) {
-          if (this.normalizeKey(task.name) === normalizedName && task.workflowId === params.workflowId) {
+          if (!task.isDeleted && this.normalizeKey(task.name) === normalizedName && task.workflowId === wfId) {
             existingTaskId = id;
             break;
           }
@@ -245,14 +235,14 @@ export class TaskOrchestratorService extends BaseService {
       if (existingTaskId) {
         if (deduplication === 'error') {
           throw new ThoughtflowError(
-            `Task with normalized name '${normalizedName}' already exists in workflow '${params.workflowId}'`,
+            `Task with normalized name '${normalizedName}' already exists in workflow '${wfId}'`,
             'DUPLICATE_TASK'
           );
         } else if (deduplication === 'skip') {
           idMap[positionalRef] = existingTaskId;
           const existingTask = this.state.tasks.get(existingTaskId);
           if (existingTask) {
-            resultTasks.push({ id: existingTaskId, name: existingTask.name, status: existingTask.status });
+            resultTasks.push({ id: existingTaskId, status: existingTask.status });
           }
           continue;
         }
@@ -266,13 +256,15 @@ export class TaskOrchestratorService extends BaseService {
           existingTask.status = taskDef.status || 'pending';
           existingTask.updatedAt = now;
           existingTask.metadata = taskDef.metadata;
+          if (taskDef.priority) existingTask.priority = taskDef.priority;
+          if (taskDef.tags) existingTask.tags = taskDef.tags;
           // Reset completion fields
           existingTask.completedAt = undefined;
           existingTask.failedAt = undefined;
           // Dependencies and parentTaskId will be resolved in second pass
           this.state.tasks.set(existingTaskId, existingTask);
           idMap[positionalRef] = existingTaskId;
-          resultTasks.push({ id: existingTaskId, name: existingTask.name, status: existingTask.status });
+          resultTasks.push({ id: existingTaskId, status: existingTask.status });
           continue;
         }
       }
@@ -293,8 +285,11 @@ export class TaskOrchestratorService extends BaseService {
         status: taskDef.status || 'pending',
         createdAt: now,
         updatedAt: now,
-        workflowId: params.workflowId,
+        workflowId: wfId,
         strategyId: effectiveStrategyId,
+        priority: taskDef.priority,
+        tags: taskDef.tags && taskDef.tags.length ? taskDef.tags : undefined,
+        startedAt: taskDef.status === 'in_progress' ? now : undefined,
         metadata: taskDef.metadata
       };
 
@@ -305,7 +300,7 @@ export class TaskOrchestratorService extends BaseService {
         workflow.taskIds.push(id);
       }
 
-      resultTasks.push({ id, name: newTask.name, status: newTask.status });
+      resultTasks.push({ id, status: newTask.status });
     }
 
     // Second pass: resolve positional references and name-based references
@@ -320,10 +315,10 @@ export class TaskOrchestratorService extends BaseService {
       if (!task) continue;
 
       // Resolve dependencies (only if workflowId is provided)
-      if (params.workflowId && taskDef.dependencies && taskDef.dependencies.length > 0) {
+      if (taskDef.dependencies && taskDef.dependencies.length > 0) {
         const resolvedDeps: string[] = [];
         for (const depRef of taskDef.dependencies) {
-          const resolvedId = this.resolveTaskReference(depRef, idMap, params.workflowId);
+          const resolvedId = this.resolveTaskReference(depRef, idMap, wfId);
           if (!resolvedId) {
             throw new ThoughtflowError(
               `Cannot resolve dependency reference '${depRef}' for task '${task.name}'.${this.getTaskReferenceGuidance()}`,
@@ -336,8 +331,8 @@ export class TaskOrchestratorService extends BaseService {
       }
 
       // Resolve parentTaskId (only if workflowId is provided)
-      if (params.workflowId && taskDef.parentTaskId) {
-        const resolvedParentId = this.resolveTaskReference(taskDef.parentTaskId, idMap, params.workflowId);
+      if (taskDef.parentTaskId) {
+        const resolvedParentId = this.resolveTaskReference(taskDef.parentTaskId, idMap, wfId);
         if (!resolvedParentId) {
           throw new ThoughtflowError(
             `Cannot resolve parentTaskId reference '${taskDef.parentTaskId}' for task '${task.name}'.${this.getTaskReferenceGuidance()}`,
@@ -350,9 +345,9 @@ export class TaskOrchestratorService extends BaseService {
         if (!parentTask) {
           throw new TaskNotFoundError(resolvedParentId);
         }
-        if (parentTask.workflowId !== params.workflowId) {
+        if (parentTask.workflowId !== wfId) {
           throw new ThoughtflowError(
-            `Parent task '${resolvedParentId}' belongs to workflow '${parentTask.workflowId}', cannot create subtask in different workflow '${params.workflowId}'`,
+            `Parent task '${resolvedParentId}' belongs to workflow '${parentTask.workflowId}', cannot create subtask in different workflow '${wfId}'`,
             'WORKFLOW_BOUNDARY_VIOLATION'
           );
         }
@@ -366,13 +361,15 @@ export class TaskOrchestratorService extends BaseService {
     // Update workflow timestamp if workflow exists
     if (workflow) {
       workflow.updatedAt = new Date().toISOString();
-      this.state.workflows.set(params.workflowId!, workflow);
+      this.state.workflows.set(workflow.id, workflow);
+      refreshWorkflowStatus(this.state, workflow.id);
     }
+    if (effectiveStrategyId) refreshStrategyStatus(this.state, effectiveStrategyId);
     
     this.triggerSave();
     
-    if (params.workflowId) {
-      logger.info(`Processed ${resultTasks.length} tasks in batch for workflow ${params.workflowId}`);
+    if (wfId) {
+      logger.info(`Processed ${resultTasks.length} tasks in batch for workflow ${wfId}`);
     } else {
       logger.info(`Processed ${resultTasks.length} standalone tasks in batch`);
     }
@@ -380,7 +377,7 @@ export class TaskOrchestratorService extends BaseService {
     // Return enhanced response. strategyId is always surfaced so the caller can
     // reuse it - critical when it was implicitly created (no strategyId/workflowId given)
     const response: {
-      tasks: Array<{ id: string; name: string; status: string }>;
+      tasks: Array<{ id: string; status: string }>;
       idMap: Record<string, string>;
       workflowId?: string;
       strategyId?: string;
@@ -388,15 +385,11 @@ export class TaskOrchestratorService extends BaseService {
       message?: string;
     } = { tasks: resultTasks, idMap, strategyId: effectiveStrategyId };
 
-    if (params.workflowId) {
-      response.workflowId = params.workflowId;
-      if (workflowCreated) {
-        response.workflowCreated = true;
-        response.message = message;
-      }
-    } else if (message) {
-      response.message = message;
+    if (wfId) {
+      response.workflowId = wfId;
     }
+    if (workflowCreated) response.workflowCreated = true;
+    if (message) response.message = message;
 
     return response;
   }
@@ -407,30 +400,44 @@ export class TaskOrchestratorService extends BaseService {
   private resolveTaskReference(
     ref: string,
     idMap: Record<string, string>,
-    workflowId: string
+    workflowId?: string
   ): string | null {
-    // Check if it's a positional reference (task-1, task-2, etc.)
-    if (ref.startsWith('task-')) {
-      return idMap[ref] || null;
-    }
+    // Positional reference within this batch (task-1, task-2, ...)
+    if (idMap[ref]) return idMap[ref];
 
-    // Try to find by exact ID match
-    if (this.state.tasks.has(ref)) {
-      const task = this.state.tasks.get(ref);
-      if (task && task.workflowId === workflowId) {
-        return ref;
-      }
-    }
+    // Exact ID match (same workflow, or any when the batch is standalone)
+    const byId = this.state.tasks.get(ref);
+    if (byId && !byId.isDeleted && (!workflowId || byId.workflowId === workflowId)) return ref;
 
-    // Try to find by normalized name within the workflow
+    // Normalized name match - scoped to the workflow, or unique across all tasks
     const normalizedName = this.normalizeKey(ref);
+    const matches: string[] = [];
     for (const [id, task] of this.state.tasks) {
-      if (this.normalizeKey(task.name) === normalizedName && task.workflowId === workflowId) {
-        return id;
-      }
+      if (task.isDeleted || this.normalizeKey(task.name) !== normalizedName) continue;
+      if (workflowId ? task.workflowId === workflowId : true) matches.push(id);
     }
+    return matches.length === 1 || (workflowId && matches.length > 0) ? matches[0] : null;
+  }
 
-    return null;
+  /**
+   * Find a live workflow by id, slugged id, or name.
+   */
+  private resolveWorkflowRef(ref: string): Workflow | undefined {
+    const direct = this.state.workflows.get(ref);
+    if (direct && !direct.isDeleted) return direct;
+    const slug = this.slugify(ref);
+    const bySlug = this.state.workflows.get(slug);
+    if (bySlug && !bySlug.isDeleted) return bySlug;
+    for (const wf of this.state.workflows.values()) {
+      if (!wf.isDeleted && this.slugify(wf.name) === slug) return wf;
+    }
+    return undefined;
+  }
+
+  private autoCreateWorkflow(name: string, strategyId?: string): Workflow {
+    const strategy = strategyId || this.createImplicitStrategy().id;
+    const created = this.createWorkflow({ name, description: 'Auto-created workflow for tasks', taskIds: [], strategyId: strategy });
+    return this.state.workflows.get(created.id)!;
   }
 
   /**
@@ -456,13 +463,30 @@ export class TaskOrchestratorService extends BaseService {
   }
 
   /**
-   * List tasks, optionally filtered by status
-   * Returns minimal summaries for efficiency
+   * List tasks, optionally filtered. Returns minimal summaries for efficiency;
+   * priority/tags/stale are included only when set. Archived tasks are hidden
+   * unless includeArchived is true.
    */
-  listTasks(status?: Task['status'], includeDeleted: boolean = false): Array<{ id: string; name: string; status: string }> {
-    const allTasks = this.filterDeletedFromMap(this.state.tasks, includeDeleted);
-    const filtered = status ? allTasks.filter(task => task.status === status) : allTasks;
-    return filtered.map(t => ({ id: t.id, name: t.name, status: t.status }));
+  listTasks(
+    status?: Task['status'],
+    includeDeleted: boolean = false,
+    filters: { tag?: string; priority?: TaskPriority; workflowId?: string; strategyId?: string; includeArchived?: boolean } = {}
+  ): Array<{ id: string; name: string; status: string; priority?: string; tags?: string[] }> {
+    let tasks = this.filterDeletedFromMap(this.state.tasks, includeDeleted);
+    if (status) tasks = tasks.filter(t => t.status === status);
+    if (!filters.includeArchived) tasks = tasks.filter(t => !t.archived);
+    if (filters.tag) { const tag = this.normalizeKey(filters.tag); tasks = tasks.filter(t => t.tags?.some(x => this.normalizeKey(x) === tag)); }
+    if (filters.priority) tasks = tasks.filter(t => t.priority === filters.priority);
+    if (filters.workflowId) {
+      const wf = this.resolveWorkflowRef(filters.workflowId);
+      tasks = tasks.filter(t => t.workflowId === (wf?.id ?? filters.workflowId));
+    }
+    if (filters.strategyId) tasks = tasks.filter(t => t.strategyId === filters.strategyId);
+    return tasks.map(t => ({
+      id: t.id, name: t.name, status: t.status,
+      ...(t.priority ? { priority: t.priority } : {}),
+      ...(t.tags?.length ? { tags: t.tags } : {})
+    }));
   }
 
   /**
@@ -473,6 +497,8 @@ export class TaskOrchestratorService extends BaseService {
     description?: string;
     status?: Task['status'];
     dependencies?: string[];
+    priority?: TaskPriority;
+    tags?: string[];
     metadata?: Record<string, any>;
   }): Task & { cognitiveSuggestions?: Array<{ type: string; thoughtId: string; reason: string }> } {
     const task = this.getTask(id);
@@ -487,8 +513,12 @@ export class TaskOrchestratorService extends BaseService {
     }
     if (updates.status !== undefined) {
       task.status = updates.status;
+      if (updates.status === 'in_progress' && !task.startedAt) {
+        task.startedAt = now;
+      }
       if (updates.status === 'completed') {
         task.completedAt = now;
+        if (!task.startedAt) task.startedAt = task.createdAt;
         // Auto-complete parent if all subtasks are now completed
         this.autoCompleteParentTask(id);
       } else if (updates.status === 'failed') {
@@ -497,6 +527,12 @@ export class TaskOrchestratorService extends BaseService {
     }
     if (updates.dependencies !== undefined) {
       task.dependencies = updates.dependencies;
+    }
+    if (updates.priority !== undefined) {
+      task.priority = updates.priority;
+    }
+    if (updates.tags !== undefined) {
+      task.tags = updates.tags.length ? updates.tags : undefined;
     }
     if (updates.metadata !== undefined) {
       // Preserve cognitive metadata when updating
@@ -514,6 +550,7 @@ export class TaskOrchestratorService extends BaseService {
     
     task.updatedAt = now;
     this.state.tasks.set(id, task);
+    this.refreshRollups(task);
     this.triggerSave();
 
     // Auto-evaluate linked thoughts if task was just completed
@@ -556,6 +593,7 @@ export class TaskOrchestratorService extends BaseService {
     }
     
     this.softDeleteEntity(task);
+    this.refreshRollups(task);
     this.triggerSave();
     logger.info(`Soft-deleted task: ${id}`);
     return true;
@@ -633,6 +671,7 @@ export class TaskOrchestratorService extends BaseService {
       this.state.strategies.set(strategyId, strategy);
     }
 
+    refreshWorkflowStatus(this.state, id);
     this.triggerSave();
     logger.info(`Created workflow: ${id} - ${workflow.name} in strategy ${strategyId}`);
     // Return minimal summary, always including the resolved strategyId so the
@@ -643,7 +682,7 @@ export class TaskOrchestratorService extends BaseService {
       status: newWorkflow.status,
       strategyId,
       ...(strategyWasImplicit ? {
-        LLM_instruction: `No strategyId was provided, so a new strategy '${strategyId}' was created. Pass strategyId: '${strategyId}' on subsequent \`workflow\`/\`tree\`/\`task\` action="create" calls to keep this work grouped together, instead of omitting it again (which mints yet another new strategy).`
+        LLM_instruction: `No strategyId was provided, so the shared project strategy '${strategyId}' was used.`
       } : {})
     } as Workflow;
   }
@@ -653,7 +692,7 @@ export class TaskOrchestratorService extends BaseService {
    */
   getWorkflow(id: string, includeDeleted: boolean = false): Workflow {
     validateId(id, 'Workflow');
-    const workflow = this.state.workflows.get(id);
+    const workflow = this.state.workflows.get(id) ?? this.resolveWorkflowRef(id);
     if (!workflow) {
       throw new WorkflowNotFoundError(id);
     }
@@ -755,10 +794,11 @@ export class TaskOrchestratorService extends BaseService {
     validateId(workflowId, 'Workflow');
     validateId(taskId, 'Task');
     
-    const workflow = this.state.workflows.get(workflowId);
+    const workflow = this.resolveWorkflowRef(workflowId);
     if (!workflow) {
       throw new WorkflowNotFoundError(workflowId);
     }
+    workflowId = workflow.id;
     
     const task = this.state.tasks.get(taskId);
     if (!task) {
@@ -794,6 +834,7 @@ export class TaskOrchestratorService extends BaseService {
     this.state.tasks.set(taskId, task);
     
     workflow.updatedAt = new Date().toISOString();
+    this.refreshRollups(task);
     this.triggerSave();
     
     logger.info(`Added task ${taskId} to workflow ${workflowId} at position ${position}`);
@@ -823,12 +864,95 @@ export class TaskOrchestratorService extends BaseService {
     
     workflow.taskIds.splice(index, 1);
     workflow.updatedAt = new Date().toISOString();
+    const removed = this.state.tasks.get(taskId);
+    if (removed && removed.workflowId === workflowId) {
+      removed.workflowId = undefined;
+    }
+    refreshWorkflowStatus(this.state, workflowId);
     this.triggerSave();
     
     logger.info(`Removed task ${taskId} from workflow ${workflowId}`);
     
     // Return minimal summary
     return { id: workflowId, status: workflow.status } as Workflow;
+  }
+
+  /**
+   * Re-derive the status of the workflow/strategy a task belongs to.
+   * Called after any task mutation so workflow.status never goes stale.
+   */
+  private refreshRollups(task: Task): void {
+    if (task.workflowId) refreshWorkflowStatus(this.state, task.workflowId);
+    if (task.strategyId) refreshStrategyStatus(this.state, task.strategyId);
+  }
+
+  /**
+   * In-progress (or optionally pending) tasks untouched for `olderThanHours`.
+   * These are usually work that finished or was abandoned without being closed.
+   */
+  getStaleTasks(olderThanHours: number = 24): Array<{ id: string; name: string; status: string; idleHours: number }> {
+    const cutoff = Date.now() - olderThanHours * 3600_000;
+    const out: Array<{ id: string; name: string; status: string; idleHours: number }> = [];
+    for (const t of this.state.tasks.values()) {
+      if (t.isDeleted || t.archived || t.status !== 'in_progress') continue;
+      const last = Date.parse(t.updatedAt);
+      if (last < cutoff) {
+        out.push({ id: t.id, name: t.name, status: t.status, idleHours: Math.round((Date.now() - last) / 3600_000) });
+      }
+    }
+    return out.sort((a, b) => b.idleHours - a.idleHours);
+  }
+
+  /**
+   * Set the status of many tasks at once. Select by `ids`, or by
+   * `staleHours` (every stale in_progress task). One call instead of N flips.
+   */
+  bulkUpdateTasks(params: { ids?: string[]; staleHours?: number; status: Task['status'] }): { updated: number; ids: string[] } {
+    if (!params.status) throw new ThoughtflowError('status is required for bulk_update', 'INVALID_INPUT');
+    const ids = new Set<string>(params.ids ?? []);
+    if (params.staleHours !== undefined) for (const t of this.getStaleTasks(params.staleHours)) ids.add(t.id);
+    if (ids.size === 0) throw new ThoughtflowError('bulk_update needs `ids` or `olderThanHours` (matching at least one task)', 'INVALID_INPUT');
+    const updated: string[] = [];
+    for (const id of ids) {
+      this.updateTask(id, { status: params.status });
+      updated.push(id);
+    }
+    return { updated: updated.length, ids: updated };
+  }
+
+  /**
+   * Archive completed tasks older than `olderThanDays`: they stay in storage
+   * (and in their workflow's progress counts) but drop out of list results.
+   */
+  archiveCompleted(olderThanDays: number = 14): { archived: number } {
+    const cutoff = Date.now() - olderThanDays * 86_400_000;
+    const now = new Date().toISOString();
+    let archived = 0;
+    for (const t of this.state.tasks.values()) {
+      if (t.isDeleted || t.archived || t.status !== 'completed') continue;
+      if (Date.parse(t.completedAt ?? t.updatedAt) < cutoff) {
+        t.archived = true;
+        t.archivedAt = now;
+        archived++;
+      }
+    }
+    if (archived > 0) this.triggerSave();
+    return { archived };
+  }
+
+  unarchiveTask(id: string): { id: string; archived: boolean } {
+    const task = this.getTask(id);
+    task.archived = undefined;
+    task.archivedAt = undefined;
+    this.triggerSave();
+    return { id, archived: false };
+  }
+
+  /** Repair + roll up the whole state (see utils/stateMaintenance). */
+  runMaintenance(): MaintenanceReport {
+    const report = runMaintenance(this.state);
+    if (report.changed) this.triggerSave();
+    return report;
   }
 
   /**

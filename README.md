@@ -491,3 +491,16 @@ This project was born from the observation that **reasoning without execution tr
 ---
 
 **Built with ❤️ for agents that need to think *and* ship.**
+
+## Configuration (env)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `THOUGHTFLOW_PROFILE` | `tasks` | `tasks` = task/workflow/strategy tools only; `full` adds Tree of Thoughts + bridge |
+| `THOUGHTFLOW_DEFAULT_STRATEGY` | server cwd name | Strategy used when `strategyId` is omitted |
+| `THOUGHTFLOW_BACKUP_KEEP` / `THOUGHTFLOW_BACKUP_INTERVAL_MIN` | `5` / `10` | Rolling state-file snapshots (`0` keep disables) |
+
+## Housekeeping
+
+- `npm run maintain -- --dry` previews, `npm run maintain` applies (backs up first) a repair pass over the state file; the server runs the same pass on startup and via `admin` action `maintain`.
+- `task` action `stale` / `bulk_update` closes work left `in_progress`; `archive` hides old completed tasks.

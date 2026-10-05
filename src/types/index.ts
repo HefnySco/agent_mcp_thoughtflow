@@ -81,6 +81,8 @@ export interface ProvenanceEntry {
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
+export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
+
 export interface Task {
   id: string;
   name: string;
@@ -96,6 +98,11 @@ export interface Task {
   errorMessage?: string;
   workflowId?: string; // Optional: task can be standalone or belong to exactly one workflow
   strategyId?: string; // Denormalized from workflow for convenience
+  priority?: TaskPriority;
+  tags?: string[];      // Free-form labels, e.g. repo names ("webclient", "de_comm")
+  startedAt?: string;   // Set the first time the task moves to in_progress
+  archived?: boolean;   // Hidden from default lists; kept for history (see task action="archive")
+  archivedAt?: string;
   verified?: boolean;
   verifiedAt?: string;        // ISO timestamp
   verificationNotes?: string;

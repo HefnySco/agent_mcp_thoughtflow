@@ -1,3 +1,4 @@
+import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import type { IStorageAdapter, ThoughtflowState } from '../storage/IStorageAdapter.js';
 import type { Strategy } from '../types/index.js';
@@ -185,23 +186,23 @@ export abstract class BaseService {
   }
 
   /**
-   * Mint a fresh implicit strategy when a tool call omits strategyId/workflowId
-   * at a root entry point (workflow action="create", tree action="create", task action="create",
-   * bridge action="promote_to_tasks"). Unlike a get-or-create singleton, this always
-   * creates a NEW strategy so unrelated sessions/calls don't silently pile
-   * into one shared bucket. The caller is expected to surface the returned
-   * id back to the LLM (as `strategyId`/`workflowId` plus an LLM_instruction)
-   * so it can be reused on subsequent related calls to keep that work grouped.
+   * Resolve the strategy used when a tool call omits strategyId/workflowId.
+   * Get-or-create ONE project-level strategy instead of minting a throwaway
+   * per call: named by THOUGHTFLOW_DEFAULT_STRATEGY, else the basename of the
+   * server's working directory (the project the agent is working in), else
+   * "default". `hint` is accepted for call-site compatibility but unused.
    */
-  protected createImplicitStrategy(hint?: string): Strategy {
-    const existingIds = new Set(this.state.strategies.keys());
-    const id = this.generateSlugId(`scratch-${hint || 'session'}`, existingIds);
-    const now = new Date().toISOString();
+  protected createImplicitStrategy(_hint?: string): Strategy {
+    const raw = process.env.THOUGHTFLOW_DEFAULT_STRATEGY || path.basename(process.cwd());
+    const id = this.slugify(raw) || 'default';
+    const existing = this.state.strategies.get(id);
+    if (existing && !existing.isDeleted) return existing;
 
+    const now = new Date().toISOString();
     const strategy: Strategy = {
       id,
-      name: id,
-      description: 'Implicit strategy auto-created because no strategyId was provided. Reuse this id on later calls to keep related work grouped together.',
+      name: raw || 'default',
+      description: 'Implicit project strategy: default home for work created without a strategyId.',
       status: 'active',
       treeIds: [],
       workflowIds: [],
@@ -211,7 +212,7 @@ export abstract class BaseService {
 
     this.state.strategies.set(id, strategy);
     this.triggerSave();
-    logger.info(`Created implicit strategy '${id}' as default`);
+    logger.info(`Created default project strategy '${id}'`);
 
     return strategy;
   }

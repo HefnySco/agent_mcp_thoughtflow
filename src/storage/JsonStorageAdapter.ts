@@ -134,6 +134,37 @@ export class JsonStorageAdapter implements IStorageAdapter {
   }
 
   /**
+   * Keep rolling snapshots of the state file (`<file>.bak-<timestamp>`): before
+   * an overwrite, copy the current file if the newest snapshot is older than
+   * THOUGHTFLOW_BACKUP_INTERVAL_MIN (default 10), and keep only the newest
+   * THOUGHTFLOW_BACKUP_KEEP (default 5). Never fails the save.
+   */
+  private async rotateBackup(): Promise<void> {
+    try {
+      const keep = Number(process.env.THOUGHTFLOW_BACKUP_KEEP ?? 5);
+      if (keep <= 0) return;
+      const intervalMs = Number(process.env.THOUGHTFLOW_BACKUP_INTERVAL_MIN ?? 10) * 60_000;
+      const dir = path.dirname(this.storagePath);
+      const prefix = `${path.basename(this.storagePath)}.bak-`;
+      const backups = (await fs.readdir(dir)).filter(f => f.startsWith(prefix)).sort();
+      const newest = backups[backups.length - 1];
+      if (newest) {
+        const st = await fs.stat(path.join(dir, newest));
+        if (Date.now() - st.mtimeMs < intervalMs) return;
+      }
+      if (this.lastSyncedMtimeMs === null && (await this.statMtimeMs()) === null) return; // nothing to back up
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      await fs.copyFile(this.storagePath, path.join(dir, `${prefix}${stamp}`));
+      backups.push(`${prefix}${stamp}`);
+      for (const old of backups.slice(0, Math.max(0, backups.length - keep))) {
+        await fs.unlink(path.join(dir, old)).catch(() => {});
+      }
+    } catch {
+      // best-effort only
+    }
+  }
+
+  /**
    * Initialize the JSON storage adapter
    * Ensures the directory exists
    */
@@ -348,6 +379,7 @@ export class JsonStorageAdapter implements IStorageAdapter {
         // so even a lock bypass can't cause two writers to share one temp file.
         const tempPath = `${this.storagePath}.${process.pid}.${Date.now()}.tmp`;
         await fs.writeFile(tempPath, JSON.stringify(data, null, 2));
+        await this.rotateBackup();
         await fs.rename(tempPath, this.storagePath);
 
         // Record the mtime of what we just wrote as our new sync point.

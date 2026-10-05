@@ -19,6 +19,7 @@ import { taskToolDefinitions } from './registry/taskToolHandlers.js';
 import { totToolDefinitions } from './registry/totToolHandlers.js';
 import { bridgeToolDefinitions } from './registry/bridgeToolHandlers.js';
 import { logger } from './utils/logger.js';
+import { isFullProfile } from './utils/profile.js';
 import { MockLLMProvider } from './llm-providers/mock-llm-provider.js';
 import { GrokLLMProvider } from './llm-providers/grok-llm-provider.js';
 import { OllamaLLMProvider } from './llm-providers/ollama-llm-provider.js';
@@ -115,7 +116,7 @@ class ThoughtflowServer {
     this.server = new Server(
       {
         name: 'agent_mcp_thoughtflow',
-        version: '1.0.0'
+        version: '2.4.0'
       },
       {
         capabilities: {
@@ -137,32 +138,34 @@ class ThoughtflowServer {
       handler: (args: any) => def.handler(args, this.taskService)
     })));
 
-    // Register Tree of Thoughts tools
-    this.toolRegistry.registerBatch(totToolDefinitions.map(def => ({
-      name: def.name,
-      tool: def.tool,
-      paramSpec: def.paramSpec,
-      handler: (args: any) => def.handler(args, this.totService)
-    })));
+    // Tree of Thoughts + Cognitive Bridge are opt-in (THOUGHTFLOW_PROFILE=full):
+    // they carry ~40% of the tool schemas but saw no use in practice.
+    if (isFullProfile()) {
+      this.toolRegistry.registerBatch(totToolDefinitions.map(def => ({
+        name: def.name,
+        tool: def.tool,
+        paramSpec: def.paramSpec,
+        handler: (args: any) => def.handler(args, this.totService)
+      })));
 
-    // Register Cognitive Bridge tools
-    this.toolRegistry.registerBatch(bridgeToolDefinitions.map(def => ({
-      name: def.name,
-      tool: def.tool,
-      paramSpec: def.paramSpec,
-      handler: (args: any) => def.handler(args, this.bridgeService)
-    })));
+      this.toolRegistry.registerBatch(bridgeToolDefinitions.map(def => ({
+        name: def.name,
+        tool: def.tool,
+        paramSpec: def.paramSpec,
+        handler: (args: any) => def.handler(args, this.bridgeService)
+      })));
+    }
 
     // Register server-wide maintenance tool
     this.toolRegistry.register(
       'admin',
       {
         name: 'admin',
-        description: 'Server-wide maintenance: clear_all (soft-delete all tasks/workflows/runs/strategies), purge_deleted (permanently remove soft-deleted items), restore_deleted (undo a soft-delete), reload_state (reload from the storage file), or clear_state (wipe storage + all in-memory state). Pick one via `action`.',
+        description: 'Server-wide maintenance: clear_all (soft-delete all tasks/workflows/runs/strategies), purge_deleted (permanently remove soft-deleted items), restore_deleted (undo a soft-delete), reload_state (reload from the storage file), clear_state (wipe storage + all in-memory state), or maintain (repair links, merge duplicate workflows, re-derive workflow/strategy status, drop empty implicit strategies; returns a report). Pick one via `action`.',
         inputSchema: {
           type: 'object',
           properties: {
-            action: { type: 'string', enum: ['clear_all', 'purge_deleted', 'restore_deleted', 'reload_state', 'clear_state'], description: 'Which operation to perform' },
+            action: { type: 'string', enum: ['clear_all', 'purge_deleted', 'restore_deleted', 'reload_state', 'clear_state', 'maintain'], description: 'Which operation to perform' },
             entityType: {
               type: 'string',
               description: 'Entity type, for purge_deleted ("task", "workflow", "tree", "strategy", "link", "workflow_run", or "all" [default]) or restore_deleted ("task", "workflow", "tree", "strategy", "link")',
@@ -183,6 +186,11 @@ class ThoughtflowServer {
             return this.taskService.purgeDeleted(args.entityType, args.olderThanDays);
           case 'restore_deleted':
             return { restored: this.taskService.restoreDeleted(args.entityType, args.id) };
+          case 'maintain': {
+            const report = this.taskService.runMaintenance();
+            await this.taskService.forceSave();
+            return report;
+          }
           case 'reload_state': {
             const sharedState = await this.storageAdapter.load();
             this.taskService.setState(sharedState);
@@ -206,7 +214,7 @@ class ThoughtflowServer {
             return { success: true, message: 'State cleared successfully' };
           }
           default:
-            throw new Error(`Unknown admin action: '${args.action}'. Expected one of: clear_all, purge_deleted, restore_deleted, reload_state, clear_state.`);
+            throw new Error(`Unknown admin action: '${args.action}'. Expected one of: clear_all, purge_deleted, restore_deleted, reload_state, clear_state, maintain.`);
         }
       },
       [
@@ -233,19 +241,11 @@ class ThoughtflowServer {
 
       try {
         // Route to appropriate service based on tool name
-        let result: any;
-        
-        if (name === 'admin') {
-          result = await this.toolRegistry.execute(name, args, null);
-        } else if (taskToolDefinitions.some(def => def.name === name)) {
-          result = await this.toolRegistry.execute(name, args, this.taskService);
-        } else if (totToolDefinitions.some(def => def.name === name)) {
-          result = await this.toolRegistry.execute(name, args, this.totService);
-        } else if (bridgeToolDefinitions.some(def => def.name === name)) {
-          result = await this.toolRegistry.execute(name, args, this.bridgeService);
-        } else {
-          throw new Error(`Unknown tool: ${name}`);
+        if (!this.toolRegistry.get(name)) {
+          throw new Error(`Unknown tool: ${name}${isFullProfile() ? '' : ' (tree/thought/bridge tools are disabled; set THOUGHTFLOW_PROFILE=full to enable)'}`);
         }
+        // Handlers are bound to their service at registration time
+        const result = await this.toolRegistry.execute(name, args, null);
 
         return {
           content: [
@@ -280,6 +280,12 @@ class ThoughtflowServer {
     this.taskService.setState(sharedState);
     this.totService.setState(sharedState);
     this.bridgeService.setState(sharedState);
+
+    // Self-heal on every start: derive statuses, merge duplicate workflows, GC empty implicit strategies
+    const report = this.taskService.runMaintenance();
+    if (report.changed) {
+      logger.info(`Startup maintenance: ${JSON.stringify(report)}`);
+    }
     
     // VisualizationService no longer needs to load - it uses services directly
 

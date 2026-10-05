@@ -440,20 +440,21 @@
       // Update task status breakdown (use displayTasks, filtered by selected strategy)
       // A task belongs to a strategy directly via task.strategyId, whether or not
       // it's part of a workflow - standalone tasks (no workflowId) only show up here.
-      let tasks = displayTasks || [];
+      let tasks = (displayTasks || []).filter(t => !t.archived);
       let deletedTasksForCount = deletedTasks;
       if (selectedStrategyId) {
         tasks = tasks.filter(t => t.strategyId === selectedStrategyId);
         deletedTasksForCount = deletedTasksForCount.filter(t => t.strategyId === selectedStrategyId);
       }
       const pending = tasks.filter(t => t.status === 'pending').length;
+      const staleCount = tasks.filter(isStale).length;
       const inProgress = tasks.filter(t => t.status === 'in_progress').length;
       const completed = tasks.filter(t => t.status === 'completed').length;
       const failed = tasks.filter(t => t.status === 'failed').length;
       const deleted = deletedTasksForCount.length;
 
       document.getElementById('tasks-pending').textContent = pending;
-      document.getElementById('tasks-in_progress').textContent = inProgress;
+      document.getElementById('tasks-in_progress').textContent = inProgress + (staleCount ? ` (${staleCount} stale)` : '');
       document.getElementById('tasks-completed').textContent = completed;
       document.getElementById('tasks-failed').textContent = failed;
       document.getElementById('tasks-deleted').textContent = deleted;
@@ -569,6 +570,7 @@
                 </div>
                 <span class="px-2 py-1 text-xs font-medium rounded status-${t.status}">${t.status}</span>
               </div>
+              ${taskBadges(t)}
               
               ${t.description ? `<p class="text-sm text-gray-300 mb-3">${escapeHtml(t.description)}</p>` : ''}
               
@@ -819,6 +821,7 @@
                     </div>
                     <span class="px-2 py-1 text-xs font-medium rounded status-${task.status}">${task.status}</span>
                   </div>
+                  ${taskBadges(task)}
                   
                   ${task.description ? `<p class="text-sm text-gray-300 mb-3">${escapeHtml(task.description)}</p>` : ''}
                   
@@ -1080,6 +1083,26 @@
         case 'pruned': return '✗';
         default: return '?';
       }
+    }
+
+    const STALE_HOURS = 24;
+    function isStale(t) {
+      return t.status === 'in_progress' && (Date.now() - Date.parse(t.updatedAt)) > STALE_HOURS * 3600000;
+    }
+    // Priority / tags / stale / archived chips shown under a task title
+    function taskBadges(t) {
+      const chips = [];
+      if (isStale(t)) {
+        const h = Math.round((Date.now() - Date.parse(t.updatedAt)) / 3600000);
+        chips.push(`<span class="px-2 py-0.5 text-xs rounded bg-yellow-900/40 text-yellow-300" title="in_progress with no update for ${h}h - finished or abandoned? Close it via task action=bulk_update">stale ${h}h</span>`);
+      }
+      if (t.priority && t.priority !== 'normal') {
+        const color = { urgent: 'bg-red-900/40 text-red-300', high: 'bg-orange-900/40 text-orange-300', low: 'bg-gray-700 text-gray-300' }[t.priority] || 'bg-gray-700 text-gray-300';
+        chips.push(`<span class="px-2 py-0.5 text-xs rounded ${color}">${escapeHtml(t.priority)}</span>`);
+      }
+      (t.tags || []).forEach(tag => chips.push(`<span class="px-2 py-0.5 text-xs rounded bg-blue-900/40 text-blue-300">#${escapeHtml(tag)}</span>`));
+      if (t.archived) chips.push('<span class="px-2 py-0.5 text-xs rounded bg-gray-700 text-gray-400">archived</span>');
+      return chips.length ? `<div class="flex flex-wrap gap-1 mb-2">${chips.join('')}</div>` : '';
     }
 
     function getStatusBorderColor(status) {
